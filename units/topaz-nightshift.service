@@ -1,0 +1,9 @@
+[Unit]
+Description=topaz-os night-shift system triage
+Documentation=https://github.com/davidar/topaz-home
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/topaz-nightshift
+Nice=10
+IOSchedulingClass=idle

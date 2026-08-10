@@ -1,0 +1,50 @@
+#!/bin/bash
+# Keep COSMIC's wallpaper on Bluefin's monthly artwork.
+#
+# Bluefin ships /usr/share/backgrounds/bluefin/NN-bluefin-{day,night}.jxl
+# (NN = month) plus GNOME timed XMLs that cross-fade day/night on the
+# clock. COSMIC has no timed-wallpaper support, so approximate it with
+# discrete flips at the midpoints of the XML's two-hour transitions
+# (05:40 day start and 18:50 night start become 04:40 and 17:50).
+# Picking the files straight from the image means new art arrives with
+# image updates. Run by topaz-bluefin-wallpaper.timer at the flip times
+# and daily for month rollovers.
+set -euo pipefail
+
+SRC_DIR=/usr/share/backgrounds/bluefin
+CONF="$HOME/.config/cosmic/com.system76.CosmicBackground/v1/all"
+
+# Not a Bluefin-based host (or the artwork moved): nothing to sync
+[ -d "$SRC_DIR" ] || { echo "no Bluefin artwork at $SRC_DIR; skipping"; exit 0; }
+
+month=$(date +%m)
+# Force base-10: date pads with leading zeros, which arithmetic contexts
+# would otherwise read as octal
+now=$((10#$(date +%H%M)))
+variant=night
+[ "$now" -ge 440 ] && [ "$now" -lt 1750 ] && variant=day
+
+src="$SRC_DIR/${month}-bluefin-${variant}.jxl"
+if [ ! -f "$src" ]; then
+    # Month without artwork (or renamed upstream): fall back to any variant
+    src=$(ls "$SRC_DIR"/*-bluefin-"$variant".jxl 2>/dev/null | head -1)
+    [ -n "$src" ] || { echo "no bluefin wallpapers found in $SRC_DIR"; exit 1; }
+fi
+
+# Rewrite the config only on change; cosmic-bg hot-reloads via cosmic-config
+if ! grep -qF "\"$src\"" "$CONF" 2>/dev/null; then
+    mkdir -p "$(dirname "$CONF")"
+    printf 'true\n' > "$(dirname "$CONF")/same-on-all"
+    cat > "$CONF" <<EOF
+(
+    output: "all",
+    source: Path("$src"),
+    filter_by_theme: false,
+    rotation_frequency: 300,
+    filter_method: Lanczos,
+    scaling_mode: Zoom,
+    sampling_method: Alphanumeric,
+)
+EOF
+    echo "wallpaper set: $src"
+fi

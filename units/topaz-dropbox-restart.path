@@ -1,0 +1,13 @@
+[Unit]
+Description=Watch the Dropbox Flatpak for updates
+
+[Path]
+# flatpak update deploys the new version, then atomically re-points
+# current/active — watching the symlink catches exactly that commit point,
+# in either install location (systemd watches the nearest existing parent
+# until the path appears).
+PathChanged=/var/lib/flatpak/app/com.dropbox.Client/current/active
+PathChanged=%h/.local/share/flatpak/app/com.dropbox.Client/current/active
+
+[Install]
+WantedBy=default.target

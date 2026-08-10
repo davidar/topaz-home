@@ -1,0 +1,5 @@
+# Grandfathered patterns in scripts imported from the topaz-os image:
+# SC1090 — nightshift sources the user's conf file (path is user-owned);
+# SC2010/SC2012 — ls+grep/head over date- or version-shaped filenames the
+# scripts themselves generate, never arbitrary input.
+disable=SC1090,SC2010,SC2012

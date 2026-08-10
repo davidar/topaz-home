@@ -1,0 +1,10 @@
+[Unit]
+Description=Tailscale system tray icon
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/tailscale systray
+
+[Install]
+WantedBy=default.target

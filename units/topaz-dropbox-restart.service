@@ -1,0 +1,13 @@
+[Unit]
+Description=Restart Dropbox after a Flatpak update
+
+[Service]
+Type=oneshot
+# Give flatpak time to finish its triggers after the deploy symlink flips.
+ExecStartPre=/bin/sleep 5
+# The daemon lives in a Flatpak app scope, not the launcher unit's cgroup,
+# so it survives the update with the old binary and a dead tray
+# registration. Kill the scope (tolerating "not running"), then relaunch —
+# the launcher's ExecStartPre also re-syncs the versioned tray icons.
+ExecStart=-/usr/bin/flatpak kill com.dropbox.Client
+ExecStart=/usr/bin/systemctl --user restart topaz-dropbox.service

@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily topaz-os night-shift triage
+Documentation=https://github.com/davidar/topaz-home
+
+[Timer]
+OnCalendar=*-*-* 05:00
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

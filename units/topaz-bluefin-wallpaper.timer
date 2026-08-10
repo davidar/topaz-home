@@ -1,0 +1,11 @@
+[Unit]
+Description=COSMIC wallpaper sync to Bluefin's monthly artwork (day/night flips)
+
+[Timer]
+OnCalendar=*-*-* 00:05
+OnCalendar=*-*-* 04:40
+OnCalendar=*-*-* 17:50
+Persistent=true
+
+[Install]
+WantedBy=timers.target

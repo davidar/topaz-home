@@ -1,0 +1,20 @@
+[Unit]
+Description=Dropbox (Flatpak)
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+# Dropbox's tray icon names sandbox-only IconThemePath icons; sync them into
+# the user icon theme so the host panel can render them (self-heals after
+# Dropbox updates, which change the versioned path).
+ExecStartPre=%h/.local/bin/topaz-dropbox-icons
+# Wait for a StatusNotifier tray to exist so the icon registers, but never
+# block login on it (headless/GNOME-without-appindicator sessions).
+ExecStartPre=-/bin/sh -c 'timeout 30 sh -c "until busctl --user status org.kde.StatusNotifierWatcher >/dev/null 2>&1; do sleep 1; done"'
+# `dropbox start` hands the daemon to the Flatpak session helper (it lives in
+# an app scope outside this unit) and exits — hence oneshot. A real restart
+# needs `flatpak kill com.dropbox.Client` first, not systemctl.
+ExecStart=/usr/bin/flatpak run --command=/app/bin/dropbox com.dropbox.Client start
+
+[Install]
+WantedBy=default.target

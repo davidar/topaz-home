@@ -1,0 +1,110 @@
+#!/bin/bash
+# topaz-nightshift — periodic system triage.
+#
+# Collects a digest of system events since the last run (failed units, journal
+# errors, OOM interventions, pending updates, image self-check). The digest
+# also carries memory across runs: the previous morning report, and standing
+# notes the owner may keep in ~/.config/topaz/nightshift-notes.md (known-benign
+# signatures, expected transitional failures, watch items). If the user has
+# configured a triage command (see nightshift.conf.example), the digest is
+# piped through it to produce the report; otherwise the raw digest is saved.
+# Runs from a systemd user timer; disabled by default
+# (enable with `just nightshift enable` in the topaz-home checkout).
+set -uo pipefail
+
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/topaz"
+REPORTS_DIR="$STATE_DIR/reports"
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/topaz/nightshift.conf"
+mkdir -p "$REPORTS_DIR"
+
+# User configuration may define TRIAGE_CMD and TRIAGE_TIMEOUT
+[ -f "$CONF" ] && . "$CONF"
+TRIAGE_TIMEOUT="${TRIAGE_TIMEOUT:-600}"
+
+SINCE=$(cat "$STATE_DIR/last-run" 2>/dev/null || date -Iseconds --date='24 hours ago')
+NOW=$(date -Iseconds)
+DIGEST="$STATE_DIR/last-digest.txt"
+NOTES="${XDG_CONFIG_HOME:-$HOME/.config}/topaz/nightshift-notes.md"
+# Most recent report other than today's (a same-day re-run should not read
+# its own output back as "the previous report").
+PREV_REPORT=$(ls -1 "$REPORTS_DIR"/????-??-??.md 2>/dev/null \
+    | grep -v "/$(date +%F)\.md$" | sort | tail -n 1)
+
+{
+    echo "== Digest window: $SINCE .. $NOW =="
+    echo
+    echo "== Owner notes (standing context, maintained outside this script) =="
+    if [ -f "$NOTES" ]; then
+        head -c 16384 "$NOTES"
+    else
+        echo "(none — the owner may create $NOTES)"
+    fi
+    echo
+    echo "== Previous report (${PREV_REPORT:-none}) =="
+    if [ -n "$PREV_REPORT" ]; then
+        head -c 16384 "$PREV_REPORT"
+    else
+        echo "(none)"
+    fi
+    echo
+    echo "== Failed system units =="
+    systemctl --failed --no-legend --plain 2>/dev/null || echo "(unavailable)"
+    echo
+    echo "== Failed user units =="
+    systemctl --user --failed --no-legend --plain 2>/dev/null || echo "(unavailable)"
+    echo
+    echo "== Journal errors (priority err and worse) =="
+    journalctl --priority=err --since "$SINCE" --no-pager -q 2>/dev/null | tail -n 200 \
+        || echo "(journal unavailable)"
+    echo
+    echo "== Kernel warnings and errors (per-signature counts, top 30) =="
+    # priority=err misses warning-level storms (a driver fault can emit
+    # thousands of p4 lines and zero p3 ones), so collapse kernel messages
+    # into signatures — numbers and addresses normalized away — and count.
+    journalctl -k --priority=warning --since "$SINCE" --no-pager -q -o cat 2>/dev/null \
+        | sed -E 's/\b0x[0-9a-fA-F]+/HEX/g; s/\b[0-9a-f]{8,}\b/HEX/g; s/[0-9]+/N/g' \
+        | sort | uniq -c | sort -rn | awk 'NR <= 30' \
+        || echo "(journal unavailable)"
+    echo
+    echo "== earlyoom activity =="
+    journalctl -u earlyoom --since "$SINCE" --no-pager -q 2>/dev/null | tail -n 50 \
+        || echo "(none)"
+    echo
+    echo "== Deployment status =="
+    rpm-ostree status 2>/dev/null | head -n 20 || echo "(unavailable)"
+    echo
+    echo "== Disk usage =="
+    df -h / /var 2>/dev/null
+    echo
+    echo "== Image self-check =="
+    topaz check 2>&1 || true
+} > "$DIGEST"
+
+REPORT="$REPORTS_DIR/$(date +%F).md"
+
+save_raw() { # save_raw <reason>
+    {
+        echo "# Night shift $(date +%F) (untriaged)"
+        echo
+        echo "$1"
+        echo
+        echo '```'
+        cat "$DIGEST"
+        echo '```'
+    } > "$REPORT"
+}
+
+if [ -n "${TRIAGE_CMD:-}" ]; then
+    if timeout "$TRIAGE_TIMEOUT" bash -c "$TRIAGE_CMD" < "$DIGEST" > "$REPORT.tmp" 2>/dev/null \
+        && [ -s "$REPORT.tmp" ]; then
+        mv "$REPORT.tmp" "$REPORT"
+    else
+        rm -f "$REPORT.tmp"
+        save_raw "The configured triage command failed or produced no output; raw digest follows."
+    fi
+else
+    save_raw "No triage command configured (see ~/.local/share/topaz-home/nightshift.conf.example); raw digest follows."
+fi
+
+echo "$NOW" > "$STATE_DIR/last-run"
+echo "Report written: $REPORT"

@@ -1,0 +1,24 @@
+# Night-shift triage configuration.
+# Copy to ~/.config/topaz/nightshift.conf and adjust.
+#
+# TRIAGE_CMD is any command that reads the event digest on stdin and writes a
+# markdown report on stdout. Point it at whatever analysis tool you prefer —
+# an AI coding agent, a local model, or a plain script. If unset, raw digests
+# are saved instead.
+#
+# The suggested triage instructions live in
+# ~/.local/share/topaz-home/nightshift-prompt.md; most LLM CLIs accept them as a
+# prompt argument, for example:
+#
+#   TRIAGE_CMD='some-agent --prompt "$(cat ~/.local/share/topaz-home/nightshift-prompt.md)"'
+#
+# TRIAGE_TIMEOUT is the maximum runtime in seconds (default 600).
+#
+# Standing context: if ~/.config/topaz/nightshift-notes.md exists, the digest
+# includes it (along with the previous morning report) so the triage backend
+# knows what is expected on this machine — known-benign log signatures,
+# in-progress transitions, watch items. Plain markdown, maintained however
+# you like; delete entries when they stop being true.
+
+#TRIAGE_CMD=''
+#TRIAGE_TIMEOUT=600

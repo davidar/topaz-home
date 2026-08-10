@@ -1,0 +1,23 @@
+#!/bin/bash
+# Copy Dropbox's tray status icons into the user's icon theme.
+#
+# The Flatpak's StatusNotifierItem advertises IconName=dropboxstatus-* with
+# an IconThemePath inside the sandbox (/app/extra/...), which the host panel
+# cannot read — the tray renders a missing-image placeholder. Installing the
+# PNGs into ~/.local/share/icons makes the names resolvable. The source path
+# is versioned per Dropbox release, so this re-runs on every service start.
+set -euo pipefail
+
+for base in /var/lib/flatpak "$HOME/.local/share/flatpak"; do
+    dist="$base/app/com.dropbox.Client/current/active/files/extra/.dropbox-dist"
+    [ -d "$dist" ] || continue
+    src=$(ls -d "$dist"/dropbox-lnx.x86_64-*/images/hicolor/16x16/status 2>/dev/null \
+        | sort -V | tail -1)
+    [ -n "$src" ] || continue
+    dest="$HOME/.local/share/icons/hicolor/16x16/status"
+    mkdir -p "$dest"
+    cp -f "$src"/dropboxstatus-*.png "$dest"/
+    exit 0
+done
+# Dropbox not installed — nothing to sync
+exit 0

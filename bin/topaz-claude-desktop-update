@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Rootless installer/updater for Claude Desktop (Linux beta) on Fedora Atomic
+# (Bluefin). The official package is Debian-only; on an immutable rpm-ostree
+# host we can't apt-install or layer a .deb, so we extract the Electron bundle
+# into ~/.local and integrate it by hand. Cowork's qemu/OVMF/virtiofsd/KVM
+# deps are already satisfied by the bluefin-dx base image.
+#
+# Usage:
+#   topaz-claude-desktop-update           # fetch latest, install/upgrade if newer
+#   CLAUDE_DEB=/path/to.deb topaz-claude-desktop-update   # install a local .deb
+set -euo pipefail
+
+REPO="https://downloads.claude.ai/claude-desktop/apt/stable"
+PREFIX="$HOME/.local"
+APP="$PREFIX/lib/claude-desktop"
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+
+if [ -n "${CLAUDE_DEB:-}" ]; then
+  DEB="$CLAUDE_DEB"; VER="local:$(basename "$DEB")"
+else
+  # Packages entries are per-version; pick the highest via sort -V.
+  PKGS="$(curl -fsSL "$REPO/dists/stable/main/binary-amd64/Packages")"
+  read -r VER FILE < <(printf '%s\n' "$PKGS" \
+    | awk '/^Version:/{v=$2} /^Filename:/{print v" "$2}' \
+    | sort -V | tail -1)
+  INSTALLED="$(cat "$APP/.pkgversion" 2>/dev/null || echo none)"
+  if [ "$VER" = "$INSTALLED" ]; then echo "Already up to date ($VER)"; exit 0; fi
+  echo "Downloading claude-desktop $VER ..."
+  curl -fSL --progress-bar -o "$TMP/c.deb" "$REPO/$FILE"
+  DEB="$TMP/c.deb"
+fi
+
+echo "Extracting ..."
+( cd "$TMP" && ar x "$DEB" && mkdir -p data && tar xf data.tar.* -C data )
+
+echo "Installing app bundle -> $APP"
+rm -rf "$APP"; mkdir -p "$APP"
+cp -a "$TMP/data/usr/lib/claude-desktop/." "$APP/"
+printf '%s' "$VER" > "$APP/.pkgversion"
+
+# Launcher wrapper (absolute, so the .desktop works regardless of PATH).
+mkdir -p "$PREFIX/bin"
+cat > "$PREFIX/bin/claude-desktop" <<EOF
+#!/usr/bin/env bash
+exec "$APP/claude-desktop" "\$@"
+EOF
+chmod +x "$PREFIX/bin/claude-desktop"
+
+# Desktop entry + icons under ~/.local/share.
+mkdir -p "$PREFIX/share/applications"
+install -m644 "$TMP"/data/usr/share/applications/*.desktop \
+  "$PREFIX/share/applications/claude-desktop.desktop"
+# Point Exec lines at our absolute wrapper.
+sed -i "s#Exec=claude-desktop#Exec=$PREFIX/bin/claude-desktop#g" \
+  "$PREFIX/share/applications/claude-desktop.desktop"
+cp -a "$TMP"/data/usr/share/icons/. "$PREFIX/share/icons/" 2>/dev/null || true
+update-desktop-database "$PREFIX/share/applications" 2>/dev/null || true
+gtk-update-icon-cache -f "$PREFIX/share/icons/hicolor" 2>/dev/null || true
+
+# chrome-sandbox must be root:root setuid for Chromium's sandbox. ~/.local is
+# on a btrfs mount without nosuid, so this is honoured. Needs root once per
+# update (the binary is replaced each time).
+if [ "$(stat -c '%U:%a' "$APP/chrome-sandbox")" != "root:4755" ]; then
+  echo "Setting chrome-sandbox setuid (pkexec will prompt) ..."
+  pkexec sh -c "chown root:root '$APP/chrome-sandbox' && chmod 4755 '$APP/chrome-sandbox'"
+fi
+
+echo "Done: claude-desktop $VER installed to $APP"
