@@ -54,14 +54,14 @@ check:
 # A daily timer digests system events into a morning report via your
 # configured TRIAGE_CMD (see share/nightshift.conf.example).
 
-# Night-shift triage: enable|disable|run|status
+# Night-shift triage: enable|disable|run|status|report
 nightshift action="status": apply
     #!/usr/bin/bash
     set -euo pipefail
     case "{{ action }}" in
     enable)
         systemctl --user enable --now topaz-nightshift.timer
-        echo "Night shift enabled (daily, ~05:00; read reports with 'topaz report')."
+        echo "Night shift enabled (daily, ~05:00; 'just nightshift report' reads the latest)."
         conf="$HOME/.config/topaz/nightshift.conf"
         if [ ! -f "$conf" ]; then
             echo "No triage command configured yet — reports will be raw digests."
@@ -77,8 +77,18 @@ nightshift action="status": apply
     status)
         systemctl --user status topaz-nightshift.timer --no-pager || true
         ;;
+    report)
+        latest=$(ls -1 "${XDG_STATE_HOME:-$HOME/.local/state}/topaz/reports"/*.md \
+            2>/dev/null | tail -1 || true)
+        if [ -z "$latest" ]; then
+            echo "No night-shift reports yet — enable with: just nightshift enable"
+            exit 1
+        fi
+        echo "== $(basename "$latest") =="
+        cat "$latest"
+        ;;
     *)
-        echo "usage: just nightshift enable|disable|run|status" >&2
+        echo "usage: just nightshift enable|disable|run|status|report" >&2
         exit 1
         ;;
     esac

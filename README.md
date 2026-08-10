@@ -38,8 +38,8 @@ this checkout and what is installed, read-only, exit 1 on divergence.
   The digest carries memory: the previous morning's report, plus standing
   notes you keep in `~/.config/topaz/nightshift-notes.md` (known-benign
   signatures, expected transitional failures, watch items). Unconfigured, it
-  saves raw digests. Read reports with `topaz report` on topaz-os, or from
-  `~/.local/state/topaz/reports/`.
+  saves raw digests. `just nightshift report` reads the latest (they live in
+  `~/.local/state/topaz/reports/`).
 - **`just wallpaper`** — keeps COSMIC's wallpaper on Bluefin's monthly
   artwork, flipping day/night variants at the midpoints of the GNOME
   timed-XML transitions (04:40 / 17:50) and rolling the month at 00:05.
