@@ -79,6 +79,12 @@ this checkout and what is installed, read-only, exit 1 on divergence.
 - **`just touchpad-dwt`** — opt out of libinput's disable-while-typing
   (keyboard-plus-touchpad play, e.g. FPS controls); `enabled=true` restores
   the default.
+- **`just kdeconnect`** — KDE Connect (daemon, SMS app, indicator) from a
+  Fedora distrobox: no Flatpak channel exists, and the container shares the
+  host session bus and `$HOME`, so pairing state, notifications, and the
+  tray behave natively. `install` builds the container and exports the
+  apps; `enable` runs the daemon as a user service. Device browse mounts
+  the phone inside the container (`distrobox enter kdeconnect`).
 
 ## Relationship to topaz-os
 

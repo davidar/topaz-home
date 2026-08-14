@@ -262,3 +262,70 @@ touchpad-dwt enabled="false":
         sed -i "0,/^(/s//(\n    disable_while_typing: Some({{ enabled }}),/" "$cfg"
     fi
     echo "disable-while-typing -> {{ enabled }} (cosmic-comp applies it live)"
+
+# KDE Connect from a distrobox: daemon, SMS app, and indicator at git
+# speed. Image-hosted history: baked while no Flatpak channel existed,
+# evicted 2026-08-14 (topaz-os ledger 0026) after the image's unmaintained
+# sshfs stopped mounting. The firewall ports (1714-1764) stay open — the
+# kdeconnect service definition and zone enablement ship with firewalld
+# itself, not the kde-connect package. Pairing state lives in
+# ~/.config/kdeconnect on the host and carries over unchanged.
+
+# Phone integration via distrobox: install|enable|disable|status
+kdeconnect action="install": apply
+    #!/usr/bin/bash
+    set -euo pipefail
+    case "{{ action }}" in
+    install)
+        if ! podman container exists kdeconnect; then
+            distrobox create --yes --name kdeconnect \
+                --image registry.fedoraproject.org/fedora-toolbox:44
+        fi
+        # cutecosmic-qt6/qt6ct/sonnet ride along: the apps are Qt, and the
+        # COSMIC theming that used to live image-side now themes them from
+        # inside the container (Qt picks the platformtheme plugin by the
+        # XDG_CURRENT_DESKTOP the exported launcher passes through).
+        distrobox enter -n kdeconnect -- sudo dnf install -y \
+            kde-connect cutecosmic-qt6 qt6ct kf6-sonnet-hunspell
+        # Absolute desktop-file paths: distrobox-export's name search does
+        # not match reverse-DNS names. (No .settings entry exists — the
+        # settings KCM opens from inside the app.)
+        for app in org.kde.kdeconnect.app org.kde.kdeconnect.sms \
+                   org.kde.kdeconnect.nonplasma; do
+            distrobox enter -n kdeconnect -- distrobox-export \
+                --app "/usr/share/applications/$app.desktop"
+        done
+        distrobox enter -n kdeconnect -- distrobox-export \
+            --bin /usr/bin/kdeconnect-cli --export-path "$HOME/.local/bin"
+        # Shadow the image's D-Bus activation (user services dir wins) so
+        # anything asking the bus for org.kde.kdeconnect starts the
+        # container daemon, never a leftover baked one.
+        mkdir -p "$HOME/.local/share/dbus-1/services"
+        printf '[D-BUS Service]\nName=org.kde.kdeconnect\nExec=/usr/bin/distrobox-enter -n kdeconnect -- /usr/bin/kdeconnectd\n' \
+            > "$HOME/.local/share/dbus-1/services/org.kde.kdeconnect.service"
+        echo "Installed. Hand over from any baked daemon: just kdeconnect enable"
+        ;;
+    enable)
+        pkill -x kdeconnectd 2>/dev/null || true
+        systemctl --user enable --now topaz-kdeconnectd.service
+        # The indicator autostarts per session; point the autostart entry
+        # at the exported (container) copy — distrobox-export prefixes it
+        # with the container name. The already-running host indicator keeps
+        # working meanwhile — it is only a D-Bus client.
+        mkdir -p "$HOME/.config/autostart"
+        cp -f "$HOME/.local/share/applications/kdeconnect-org.kde.kdeconnect.nonplasma.desktop" \
+            "$HOME/.config/autostart/org.kde.kdeconnect.nonplasma.desktop"
+        echo "Daemon enabled (topaz-kdeconnectd.service); pairing state is ~/.config/kdeconnect."
+        ;;
+    disable)
+        systemctl --user disable --now topaz-kdeconnectd.service
+        ;;
+    status)
+        systemctl --user status topaz-kdeconnectd.service --no-pager || true
+        "$HOME/.local/bin/kdeconnect-cli" --list-devices 2>/dev/null || true
+        ;;
+    *)
+        echo "action must be install|enable|disable|status" >&2
+        exit 1
+        ;;
+    esac

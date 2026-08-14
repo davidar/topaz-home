@@ -1,0 +1,15 @@
+[Unit]
+Description=KDE Connect daemon (kdeconnect distrobox)
+After=graphical-session.target
+
+[Service]
+Type=simple
+# The daemon lives in the `kdeconnect` distrobox (just kdeconnect install);
+# distrobox-enter starts the container on demand. It shares the host
+# session bus and $HOME, so pairing state (~/.config/kdeconnect), the
+# indicator, and notifications behave exactly as the baked daemon did.
+ExecStart=/usr/bin/distrobox-enter -n kdeconnect -- /usr/bin/kdeconnectd
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
