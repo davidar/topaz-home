@@ -270,8 +270,11 @@ touchpad-dwt enabled="false":
 # kdeconnect service definition and zone enablement ship with firewalld
 # itself, not the kde-connect package. Pairing state lives in
 # ~/.config/kdeconnect on the host and carries over unchanged.
+# Phone storage mounts under ~/Phone via topaz-kdeconnect-mount (host-side
+# rclone; the daemon's own sshfs mount is trapped in the container's mount
+# namespace), wired to "Browse device" through an x-scheme-handler.
 
-# Phone integration via distrobox: install|enable|disable|status
+# Phone integration via distrobox: install|enable|disable|status|mount|unmount
 kdeconnect action="install": apply
     #!/usr/bin/bash
     set -euo pipefail
@@ -303,7 +306,17 @@ kdeconnect action="install": apply
         mkdir -p "$HOME/.local/share/dbus-1/services"
         printf '[D-BUS Service]\nName=org.kde.kdeconnect\nExec=/usr/bin/distrobox-enter -n kdeconnect -- /usr/bin/kdeconnectd\n' \
             > "$HOME/.local/share/dbus-1/services/org.kde.kdeconnect.service"
+        # "Browse device" opens a kdeconnect:// URL meant for KDE's KIO
+        # worker; without a handler xdg-open falls through its browser
+        # list and the URL ends up mangled in a web browser. Route it to
+        # our own host-side mount (topaz-kdeconnect-mount) instead.
+        printf '[Desktop Entry]\nType=Application\nName=KDE Connect device browser\nExec=%s/.local/bin/topaz-kdeconnect-mount open %%u\nMimeType=x-scheme-handler/kdeconnect;\nNoDisplay=true\n' \
+            "$HOME" > "$HOME/.local/share/applications/topaz-kdeconnect-browse.desktop"
+        xdg-mime default topaz-kdeconnect-browse.desktop x-scheme-handler/kdeconnect
         echo "Installed. Hand over from any baked daemon: just kdeconnect enable"
+        ;;
+    mount | unmount)
+        exec "$HOME/.local/bin/topaz-kdeconnect-mount" "{{ action }}"
         ;;
     enable)
         pkill -x kdeconnectd 2>/dev/null || true
@@ -323,9 +336,10 @@ kdeconnect action="install": apply
     status)
         systemctl --user status topaz-kdeconnectd.service --no-pager || true
         "$HOME/.local/bin/kdeconnect-cli" --list-devices 2>/dev/null || true
+        "$HOME/.local/bin/topaz-kdeconnect-mount" status
         ;;
     *)
-        echo "action must be install|enable|disable|status" >&2
+        echo "action must be install|enable|disable|status|mount|unmount" >&2
         exit 1
         ;;
     esac

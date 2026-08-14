@@ -1,0 +1,103 @@
+#!/usr/bin/bash
+# Mount the paired phone's storage on the host, over the KDE Connect sftp
+# channel but with our own rclone session — the containerized daemon's
+# sshfs mount lives in the container's mount namespace where no host app
+# can see it, and the host's own sshfs is broken (EPERM from setuid
+# fusermount3, Fedora sshfs 3.7.6 / fuse3 3.18 regression) while rclone's
+# FUSE path works.
+#
+# The daemon is only asked for what it does well over D-Bus: mountAndWait
+# makes the phone start its sftp server (and keeps the daemon's own
+# container-side mount, which is harmless), and getDirectories names the
+# phone's browse roots. The server's address comes from the daemon's own
+# sshfs command line — the container shares the host PID namespace — and
+# auth is the pairing key in ~/.config/kdeconnect. Each browse root is
+# mounted under ~/Phone by its human name, e.g.
+# ~/Phone/Internal shared storage. The mounts are entirely ours: they
+# survive daemon restarts and go away only via unmount (or reboot).
+#
+# usage: topaz-kdeconnect-mount mount|unmount|status|open [kdeconnect-url]
+set -euo pipefail
+
+phone_dir="$HOME/Phone"
+
+busfmt() {
+    busctl --user --json=short call org.kde.kdeconnect.daemon "$@"
+}
+
+device_id() {
+    # "open" is handed a kdeconnect://<device-id>/ URL by the desktop
+    # handler; otherwise take the daemon's first reachable device.
+    local url="${1:-}" rest
+    if [ -n "$url" ]; then
+        rest="${url#kdeconnect://}"
+        printf '%s\n' "${rest%%/*}"
+    else
+        busfmt /modules/kdeconnect org.kde.kdeconnect.daemon \
+            devices bb true true | jq -re '.data[0][0]'
+    fi
+}
+
+mount_phone() {
+    local id="$1" sftp_path="/modules/kdeconnect/devices/$1/sftp"
+    [ -n "$id" ] ||
+        { echo "topaz-kdeconnect-mount: no reachable paired device" >&2; exit 1; }
+    busfmt "$sftp_path" org.kde.kdeconnect.device.sftp mountAndWait |
+        jq -e '.data[0]' > /dev/null ||
+        { echo "topaz-kdeconnect-mount: daemon could not reach the phone" >&2; exit 1; }
+
+    # The daemon's own sshfs (inside the container, same PID namespace)
+    # carries the server address the phone just handed out.
+    local args host port
+    args=$(pgrep -fa "^/usr/bin/sshfs kdeconnect@.* /run/user/$(id -u)/$id " |
+        head -1 | cut -d' ' -f2-)
+    [ -n "$args" ] ||
+        { echo "topaz-kdeconnect-mount: no daemon sshfs process for $id" >&2; exit 1; }
+    host=$(sed -E 's|^/usr/bin/sshfs kdeconnect@([^:]+):.*|\1|' <<< "$args")
+    port=$(sed -E 's|.* -p ([0-9]+) .*|\1|' <<< "$args")
+    export RCLONE_SFTP_HOST="$host" RCLONE_SFTP_PORT="$port"
+    export RCLONE_SFTP_USER=kdeconnect
+    export RCLONE_SFTP_KEY_FILE="$HOME/.config/kdeconnect/privateKey.pem"
+
+    # Browse roots as "<name>\t<phone path>" (getDirectories keys are the
+    # daemon's local mount paths — strip its mountpoint prefix).
+    local mounted=0 name path target
+    while IFS=$'\t' read -r name path; do
+        target="$phone_dir/$name"
+        grep -qsF " $(printf '%s' "$target" | sed 's/ /\\040/g') fuse" /proc/mounts &&
+            { mounted=$((mounted + 1)); continue; }  # already mounted
+        mkdir -p "$target"
+        rclone mount ":sftp:$path" "$target" --daemon --dir-cache-time 30s
+        mounted=$((mounted + 1))
+        echo "mounted $target"
+    done < <(busfmt "$sftp_path" org.kde.kdeconnect.device.sftp getDirectories |
+        jq -re --arg mp "/run/user/$(id -u)/$id" \
+            '.data[0] | to_entries[] | "\(.value.data | gsub("/"; "-"))\t\(.key | ltrimstr($mp))"')
+    [ "$mounted" -gt 0 ] ||
+        { echo "topaz-kdeconnect-mount: phone advertised no browse roots" >&2; exit 1; }
+}
+
+unmount_phone() {
+    local target found=0
+    while read -r target; do
+        found=1
+        fusermount3 -uz "$target" && echo "unmounted $target"
+        rmdir "$target" 2>/dev/null || true
+    done < <(awk -v pd="$phone_dir/" 'index($2, pd) == 1 && $3 ~ /^fuse/ { print $2 }' /proc/mounts |
+        sed 's/\\040/ /g')
+    [ "$found" = 1 ] || echo "nothing mounted under $phone_dir"
+}
+
+case "${1:-}" in
+mount) mount_phone "$(device_id "${2:-}")" ;;
+unmount) unmount_phone ;;
+status) grep -F " $phone_dir/" /proc/mounts ||
+    echo "nothing mounted under $phone_dir" ;;
+open)
+    id=$(device_id "${2:-}")
+    mount_phone "$id"
+    first=$(find "$phone_dir" -mindepth 1 -maxdepth 1 -type d | sort | head -1)
+    exec xdg-open "${first:-$phone_dir}"
+    ;;
+*) echo "usage: topaz-kdeconnect-mount mount|unmount|status|open [kdeconnect-url]" >&2; exit 2 ;;
+esac
