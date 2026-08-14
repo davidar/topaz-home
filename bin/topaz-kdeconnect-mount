@@ -55,7 +55,9 @@ teardown() {
     local target old mounts
     mounts=$(list_mounts)
     old=$(cat "$watchdog_pidfile" 2>/dev/null) || true
-    [ -n "$old" ] && [ "$old" != "$$" ] && kill "$old" 2>/dev/null || true
+    if [ -n "$old" ] && [ "$old" != "$$" ]; then
+        kill "$old" 2>/dev/null || true
+    fi
     rm -f "$watchdog_pidfile"
     [ -n "$mounts" ] || return 1
     # Kill the FUSE servers first: pending I/O on an unreachable mount is
