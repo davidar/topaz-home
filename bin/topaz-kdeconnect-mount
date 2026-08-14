@@ -52,22 +52,24 @@ list_mounts() {
 }
 
 teardown() {
-    local target old found=1
+    local target old mounts
+    mounts=$(list_mounts)
     old=$(cat "$watchdog_pidfile" 2>/dev/null) || true
     [ -n "$old" ] && [ "$old" != "$$" ] && kill "$old" 2>/dev/null || true
+    rm -f "$watchdog_pidfile"
+    [ -n "$mounts" ] || return 1
     # Kill the FUSE servers first: pending I/O on an unreachable mount is
     # stuck in uninterruptible sleep, and only the server's death aborts
-    # it. The pattern is argv[0]-anchored so it cannot match this script.
+    # it (rclone also unmounts on the way out). The pattern is
+    # argv[0]-anchored so it cannot match this script.
     pgrep -f "^/usr/bin/rclone mount :sftp:.* $phone_dir/" -d' ' |
         xargs -r kill 2>/dev/null || true
     sleep 1
     while read -r target; do
-        found=0
-        fusermount3 -uz "$target" && echo "unmounted $target"
+        fusermount3 -uz "$target" 2>/dev/null || true
         rmdir "$target" 2>/dev/null || true
-    done < <(list_mounts)
-    rm -f "$watchdog_pidfile"
-    return "$found"
+        echo "unmounted $target"
+    done <<< "$mounts"
 }
 
 start_watchdog() {
@@ -78,24 +80,59 @@ start_watchdog() {
     echo $! > "$watchdog_pidfile"
 }
 
+# Ask the daemon for a working sftp session and export its coordinates
+# for rclone. Fails when the daemon reports failure, when no sshfs
+# process exists to read the address from (an adopted mount corpse has
+# none), or when the advertised port doesn't answer — after a wifi flap
+# the daemon happily reports a zombie session whose server is long gone.
+daemon_session() {
+    local id="$1" args host port
+    busfmt "/modules/kdeconnect/devices/$id/sftp" \
+        org.kde.kdeconnect.device.sftp mountAndWait |
+        jq -e '.data[0]' > /dev/null || return 1
+    # The daemon's own sshfs (inside the container, same PID namespace)
+    # carries the server address the phone just handed out.
+    args=$(pgrep -fa "^/usr/bin/sshfs kdeconnect@.* /run/user/$(id -u)/$id " |
+        head -1 | cut -d' ' -f2-)
+    [ -n "$args" ] || return 1
+    host=$(sed -E 's|^/usr/bin/sshfs kdeconnect@([^:]+):.*|\1|' <<< "$args")
+    port=$(sed -E 's|.* -p ([0-9]+) .*|\1|' <<< "$args")
+    timeout 3 bash -c "exec 3<> /dev/tcp/$host/$port" 2>/dev/null || return 1
+    export RCLONE_SFTP_HOST="$host" RCLONE_SFTP_PORT="$port"
+}
+
 mount_phone() {
     local id="$1" sftp_path="/modules/kdeconnect/devices/$1/sftp"
     [ -n "$id" ] ||
-        { echo "topaz-kdeconnect-mount: no reachable paired device" >&2; exit 1; }
-    busfmt "$sftp_path" org.kde.kdeconnect.device.sftp mountAndWait |
-        jq -e '.data[0]' > /dev/null ||
-        { echo "topaz-kdeconnect-mount: daemon could not reach the phone" >&2; exit 1; }
-
-    # The daemon's own sshfs (inside the container, same PID namespace)
-    # carries the server address the phone just handed out.
-    local args host port
-    args=$(pgrep -fa "^/usr/bin/sshfs kdeconnect@.* /run/user/$(id -u)/$id " |
-        head -1 | cut -d' ' -f2-)
-    [ -n "$args" ] ||
-        { echo "topaz-kdeconnect-mount: no daemon sshfs process for $id" >&2; exit 1; }
-    host=$(sed -E 's|^/usr/bin/sshfs kdeconnect@([^:]+):.*|\1|' <<< "$args")
-    port=$(sed -E 's|.* -p ([0-9]+) .*|\1|' <<< "$args")
-    export RCLONE_SFTP_HOST="$host" RCLONE_SFTP_PORT="$port"
+        { echo "topaz-kdeconnect-mount: no reachable paired device" >&2; return 1; }
+    if ! daemon_session "$id"; then
+        # Stale session: the daemon unmounts (killing a zombie sshfs it
+        # owns) and mounts fresh, making the phone restart its server.
+        echo "stale daemon session, remounting" >&2
+        busfmt "$sftp_path" org.kde.kdeconnect.device.sftp unmount > /dev/null || true
+        sleep 2
+        if ! daemon_session "$id"; then
+            # Deeper: stale device discovery (phone changed IP) or an
+            # adopted mount corpse the daemon cannot unmount — restart
+            # the daemon (its launcher sweeps corpses), then refresh
+            # discovery and wait for the device object to come back.
+            echo "restarting the daemon and rediscovering" >&2
+            systemctl --user restart topaz-kdeconnectd.service
+            local i found=""
+            for i in 1 2 3 4 5 6 7 8 9 10; do
+                sleep 3
+                "$HOME/.local/bin/kdeconnect-cli" --refresh 2>/dev/null || true
+                busfmt /modules/kdeconnect org.kde.kdeconnect.daemon \
+                    devices bb true true 2>/dev/null |
+                    jq -e --arg id "$id" '.data[0] | index($id)' > /dev/null &&
+                    { found=$i; break; }
+            done
+            if [ -z "$found" ] || ! { sleep 2; daemon_session "$id"; }; then
+                echo "topaz-kdeconnect-mount: phone session unrecoverable (is KDE Connect running on the phone?)" >&2
+                return 1
+            fi
+        fi
+    fi
     export RCLONE_SFTP_USER=kdeconnect
     export RCLONE_SFTP_KEY_FILE="$HOME/.config/kdeconnect/privateKey.pem"
 
@@ -107,15 +144,18 @@ mount_phone() {
         grep -qsF " $(printf '%s' "$target" | sed 's/ /\\040/g') fuse" /proc/mounts &&
             { mounted=$((mounted + 1)); continue; }  # already mounted
         mkdir -p "$target"
-        rclone mount ":sftp:$path" "$target" --daemon --dir-cache-time 30s
+        # Explicit || so a failure is skipped (not counted) even when the
+        # caller's if-context has suppressed errexit.
+        rclone mount ":sftp:$path" "$target" --daemon --dir-cache-time 30s ||
+            { rmdir "$target" 2>/dev/null; continue; }
         mounted=$((mounted + 1))
         echo "mounted $target"
     done < <(busfmt "$sftp_path" org.kde.kdeconnect.device.sftp getDirectories |
         jq -re --arg mp "/run/user/$(id -u)/$id" \
             '.data[0] | to_entries[] | "\(.value.data | gsub("/"; "-"))\t\(.key | ltrimstr($mp))"')
     [ "$mounted" -gt 0 ] ||
-        { echo "topaz-kdeconnect-mount: phone advertised no browse roots" >&2; exit 1; }
-    start_watchdog "$host" "$port"
+        { echo "topaz-kdeconnect-mount: phone advertised no browse roots" >&2; return 1; }
+    start_watchdog "$RCLONE_SFTP_HOST" "$RCLONE_SFTP_PORT"
 }
 
 run_watchdog() {
@@ -145,8 +185,15 @@ unmount) teardown || echo "nothing mounted under $phone_dir" ;;
 status) grep -F " $phone_dir/" /proc/mounts ||
     echo "nothing mounted under $phone_dir" ;;
 open)
+    # The GUI path (browse click): a silent failure looks like a dead
+    # button, so surface it as a notification.
     id=$(device_id "${2:-}")
-    mount_phone "$id"
+    if ! mount_phone "$id"; then
+        command -v notify-send > /dev/null &&
+            notify-send -u critical -i phone "Phone browse failed" \
+                "Could not reach the phone's storage. Is KDE Connect running on the phone?"
+        exit 1
+    fi
     first=$(find "$phone_dir" -mindepth 1 -maxdepth 1 -type d | sort | head -1)
     exec xdg-open "${first:-$phone_dir}"
     ;;
