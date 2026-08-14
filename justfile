@@ -278,6 +278,16 @@ touchpad-dwt enabled="false":
 kdeconnect action="install": apply
     #!/usr/bin/bash
     set -euo pipefail
+    # Shadows the image's D-Bus activation (user services dir wins) so
+    # anything asking the bus for org.kde.kdeconnect goes through the
+    # container unit, never a leftover baked daemon. SystemdService=
+    # routes activation through topaz-kdeconnectd.service so activation
+    # and the unit cannot race each other with competing daemons.
+    write_activation() {
+        mkdir -p "$HOME/.local/share/dbus-1/services"
+        printf '[D-BUS Service]\nName=org.kde.kdeconnect\nSystemdService=topaz-kdeconnectd.service\nExec=/usr/bin/distrobox-enter -n kdeconnect -- /usr/bin/kdeconnectd\n' \
+            > "$HOME/.local/share/dbus-1/services/org.kde.kdeconnect.service"
+    }
     case "{{ action }}" in
     install)
         if ! podman container exists kdeconnect; then
@@ -300,12 +310,7 @@ kdeconnect action="install": apply
         done
         distrobox enter -n kdeconnect -- distrobox-export \
             --bin /usr/bin/kdeconnect-cli --export-path "$HOME/.local/bin"
-        # Shadow the image's D-Bus activation (user services dir wins) so
-        # anything asking the bus for org.kde.kdeconnect starts the
-        # container daemon, never a leftover baked one.
-        mkdir -p "$HOME/.local/share/dbus-1/services"
-        printf '[D-BUS Service]\nName=org.kde.kdeconnect\nExec=/usr/bin/distrobox-enter -n kdeconnect -- /usr/bin/kdeconnectd\n' \
-            > "$HOME/.local/share/dbus-1/services/org.kde.kdeconnect.service"
+        write_activation
         # "Browse device" opens a kdeconnect:// URL meant for KDE's KIO
         # worker; without a handler xdg-open falls through its browser
         # list and the URL ends up mangled in a web browser. Route it to
@@ -320,6 +325,7 @@ kdeconnect action="install": apply
         ;;
     enable)
         pkill -x kdeconnectd 2>/dev/null || true
+        write_activation
         systemctl --user enable --now topaz-kdeconnectd.service
         # The indicator autostarts per session; point the autostart entry
         # at the exported (container) copy — distrobox-export prefixes it
@@ -332,6 +338,11 @@ kdeconnect action="install": apply
         ;;
     disable)
         systemctl --user disable --now topaz-kdeconnectd.service
+        # Without this, any D-Bus request for the name would restart the
+        # unit regardless of its enabled state. On a pre-eviction image
+        # the baked activation becomes visible again and may start the
+        # baked daemon instead.
+        rm -f "$HOME/.local/share/dbus-1/services/org.kde.kdeconnect.service"
         ;;
     status)
         systemctl --user status topaz-kdeconnectd.service --no-pager || true

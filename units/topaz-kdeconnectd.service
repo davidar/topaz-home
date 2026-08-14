@@ -3,12 +3,16 @@ Description=KDE Connect daemon (kdeconnect distrobox)
 After=graphical-session.target
 
 [Service]
-Type=simple
-# The daemon lives in the `kdeconnect` distrobox (just kdeconnect install);
-# distrobox-enter starts the container on demand. It shares the host
-# session bus and $HOME, so pairing state (~/.config/kdeconnect), the
-# indicator, and notifications behave exactly as the baked daemon did.
-ExecStart=/usr/bin/distrobox-enter -n kdeconnect -- /usr/bin/kdeconnectd
+# Type=dbus + BusName: the unit counts as up once the daemon owns the
+# name, and D-Bus activation (SystemdService= in the activation file)
+# starts this unit instead of racing a second daemon against it.
+Type=dbus
+BusName=org.kde.kdeconnect
+# The launcher enters the `kdeconnect` distrobox (just kdeconnect
+# install), sweeping stale sshfs mounts first; the container shares the
+# host session bus and $HOME, so pairing state (~/.config/kdeconnect),
+# the indicator, and notifications behave exactly as the baked daemon.
+ExecStart=%h/.local/bin/topaz-kdeconnectd
 Restart=on-failure
 
 [Install]

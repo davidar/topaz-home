@@ -1,0 +1,19 @@
+#!/usr/bin/bash
+# Launcher for the containerized kdeconnectd — the single entry point for
+# both topaz-kdeconnectd.service and D-Bus activation (SystemdService=
+# routes activation through the unit, so the two can no longer race each
+# other with competing daemons).
+#
+# Before the daemon starts, sweep sshfs leftovers from the container's
+# mount namespace: a daemon that died uncleanly leaves its mount behind
+# as a dead FUSE endpoint ("Transport endpoint is not connected"), and
+# every remount at that path then fails with "sshfs finished with exit
+# code 1" until the corpse is unmounted. Anything sshfs-mounted under
+# the runtime dir at daemon start is by definition ownerless.
+set -euo pipefail
+# shellcheck disable=SC2016  # the quoted script expands inside the container
+exec distrobox-enter -n kdeconnect -- sh -c '
+    awk -v rd="/run/user/$(id -u)/" \
+        '\''$3 == "fuse.sshfs" && index($2, rd) == 1 { print $2 }'\'' /proc/mounts |
+        while read -r m; do fusermount3 -uz "$m"; done
+    exec /usr/bin/kdeconnectd'
