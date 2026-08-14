@@ -13,13 +13,20 @@
 # sshfs command line — the container shares the host PID namespace — and
 # auth is the pairing key in ~/.config/kdeconnect. Each browse root is
 # mounted under ~/Phone by its human name, e.g.
-# ~/Phone/Internal shared storage. The mounts are entirely ours: they
-# survive daemon restarts and go away only via unmount (or reboot).
+# ~/Phone/Internal shared storage.
+#
+# The mounts are entirely ours; a watchdog probes the phone's sftp port
+# out-of-band and tears the mounts down after ~30s of unreachability.
+# Teardown kills rclone BEFORE unmounting: I/O on a dead FUSE mount
+# hangs uninterruptibly, and killing the FUSE server is what makes the
+# kernel abort those requests (ENOTCONN) instead of leaving processes
+# stuck — never probe a possibly-dead mount with regular file I/O.
 #
 # usage: topaz-kdeconnect-mount mount|unmount|status|open [kdeconnect-url]
 set -euo pipefail
 
 phone_dir="$HOME/Phone"
+watchdog_pidfile="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/topaz-phone-watchdog.pid"
 
 busfmt() {
     busctl --user --json=short call org.kde.kdeconnect.daemon "$@"
@@ -36,6 +43,39 @@ device_id() {
         busfmt /modules/kdeconnect org.kde.kdeconnect.daemon \
             devices bb true true | jq -re '.data[0][0]'
     fi
+}
+
+# All fuse mounts under ~/Phone, unescaped, one per line.
+list_mounts() {
+    awk -v pd="$phone_dir/" 'index($2, pd) == 1 && $3 ~ /^fuse/ { print $2 }' \
+        /proc/mounts | sed 's/\\040/ /g'
+}
+
+teardown() {
+    local target old found=1
+    old=$(cat "$watchdog_pidfile" 2>/dev/null) || true
+    [ -n "$old" ] && [ "$old" != "$$" ] && kill "$old" 2>/dev/null || true
+    # Kill the FUSE servers first: pending I/O on an unreachable mount is
+    # stuck in uninterruptible sleep, and only the server's death aborts
+    # it. The pattern is argv[0]-anchored so it cannot match this script.
+    pgrep -f "^/usr/bin/rclone mount :sftp:.* $phone_dir/" -d' ' |
+        xargs -r kill 2>/dev/null || true
+    sleep 1
+    while read -r target; do
+        found=0
+        fusermount3 -uz "$target" && echo "unmounted $target"
+        rmdir "$target" 2>/dev/null || true
+    done < <(list_mounts)
+    rm -f "$watchdog_pidfile"
+    return "$found"
+}
+
+start_watchdog() {
+    local host="$1" port="$2" old
+    old=$(cat "$watchdog_pidfile" 2>/dev/null) || true
+    [ -n "$old" ] && kill -0 "$old" 2>/dev/null && return 0
+    setsid "$0" watchdog "$host" "$port" < /dev/null > /dev/null 2>&1 &
+    echo $! > "$watchdog_pidfile"
 }
 
 mount_phone() {
@@ -75,22 +115,33 @@ mount_phone() {
             '.data[0] | to_entries[] | "\(.value.data | gsub("/"; "-"))\t\(.key | ltrimstr($mp))"')
     [ "$mounted" -gt 0 ] ||
         { echo "topaz-kdeconnect-mount: phone advertised no browse roots" >&2; exit 1; }
+    start_watchdog "$host" "$port"
 }
 
-unmount_phone() {
-    local target found=0
-    while read -r target; do
-        found=1
-        fusermount3 -uz "$target" && echo "unmounted $target"
-        rmdir "$target" 2>/dev/null || true
-    done < <(awk -v pd="$phone_dir/" 'index($2, pd) == 1 && $3 ~ /^fuse/ { print $2 }' /proc/mounts |
-        sed 's/\\040/ /g')
-    [ "$found" = 1 ] || echo "nothing mounted under $phone_dir"
+run_watchdog() {
+    local host="$1" port="$2" fails=0
+    while sleep 10; do
+        [ -n "$(list_mounts)" ] || exit 0  # manually unmounted
+        if timeout 3 bash -c "exec 3<> /dev/tcp/$host/$port" 2>/dev/null; then
+            fails=0
+        else
+            fails=$((fails + 1))
+        fi
+        if [ "$fails" -ge 3 ]; then
+            teardown || true
+            echo "phone unreachable for 30s; unmounted ~/Phone" |
+                systemd-cat -t topaz-kdeconnect-mount
+            command -v notify-send > /dev/null &&
+                notify-send -i phone "Phone storage unmounted" \
+                    "The phone stopped answering; ~/Phone was detached cleanly."
+            exit 0
+        fi
+    done
 }
 
 case "${1:-}" in
 mount) mount_phone "$(device_id "${2:-}")" ;;
-unmount) unmount_phone ;;
+unmount) teardown || echo "nothing mounted under $phone_dir" ;;
 status) grep -F " $phone_dir/" /proc/mounts ||
     echo "nothing mounted under $phone_dir" ;;
 open)
@@ -99,5 +150,6 @@ open)
     first=$(find "$phone_dir" -mindepth 1 -maxdepth 1 -type d | sort | head -1)
     exec xdg-open "${first:-$phone_dir}"
     ;;
+watchdog) run_watchdog "$2" "$3" ;;  # internal, spawned by mount
 *) echo "usage: topaz-kdeconnect-mount mount|unmount|status|open [kdeconnect-url]" >&2; exit 2 ;;
 esac
