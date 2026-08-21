@@ -60,10 +60,13 @@ this checkout and what is installed, read-only, exit 1 on divergence.
 - **`just qt-dark`** — Qt Flatpaks on the KDE runtime follow GNOME dark mode
   via Kvantum, with a `--nofilesystem=xdg-config/kdeglobals` negation so
   KDE-runtime apps cannot read a host kdeglobals that fights the theme.
-- **`just electron-wayland`** — per-app `ELECTRON_OZONE_PLATFORM_HINT=auto`
-  overrides. Electron apps default to XWayland, and image pastes into them
-  cross the compositor's X11 selection bridge, which drops large transfers
-  (Discord's "file cannot be empty"); Wayland-native avoids the bridge.
+- **`just electron-wayland`** — per-app Wayland socket grant plus
+  `ELECTRON_OZONE_PLATFORM_HINT=auto` (the hint alone is inert when the
+  app manifest only grants x11). Electron apps default to XWayland;
+  Wayland-native avoids the compositor's X11 selection bridge for
+  clipboard transfers. Caveat: Discord stable's bootstrap re-forces its
+  ozone platform after argv parsing and stays on XWayland regardless —
+  the override is left armed in case a Discord update stops doing that.
 - **`just chrome-integration`** — Chrome Flatpak overrides for automation
   workflows: WebGPU via Vulkan, read-only visibility of Claude Code state.
 - **`just claude-desktop`** — rootless installer/updater for the Debian-only

@@ -146,13 +146,14 @@ dropbox: apply
     echo "Manual restarts need 'flatpak kill com.dropbox.Client' first (the"
     echo "daemon lives in a Flatpak scope, outside the unit's cgroup)."
 
-# Run Electron Flatpaks Wayland-native (fixes empty image pastes into Discord)
+# Run Electron Flatpaks Wayland-native (grants the Wayland socket + ozone hint;
+# note Discord stable ignores it — its bootstrap forces the platform post-argv)
 electron-wayland apps="com.discordapp.Discord":
     #!/usr/bin/bash
     set -euo pipefail
     for app in {{ apps }}; do
-        flatpak override --user --env=ELECTRON_OZONE_PLATFORM_HINT=auto "$app"
-        echo "$app: ELECTRON_OZONE_PLATFORM_HINT=auto (restart the app to apply)"
+        flatpak override --user --socket=wayland --env=ELECTRON_OZONE_PLATFORM_HINT=auto "$app"
+        echo "$app: wayland socket + ELECTRON_OZONE_PLATFORM_HINT=auto (restart the app to apply)"
     done
 
 # Chrome overrides for automation: WebGPU via Vulkan, read-only Claude Code state
