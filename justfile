@@ -264,6 +264,43 @@ touchpad-dwt enabled="false":
     fi
     echo "disable-while-typing -> {{ enabled }} (cosmic-comp applies it live)"
 
+# Reopen last session's apps on niri: enable|disable|snapshot|status
+session-restore action="status": apply
+    #!/usr/bin/bash
+    set -euo pipefail
+    cfg="$HOME/.config/niri/config.kdl"
+    inc='include optional=true "topaz-session.kdl"'
+    case "{{ action }}" in
+    enable)
+        mkdir -p "$(dirname "$cfg")"
+        if ! grep -qxF "$inc" "$cfg" 2>/dev/null; then
+            printf '\n// Reopen the previous session'"'"'s apps (topaz-home session-restore).\n%s\n' "$inc" >> "$cfg"
+            echo "Appended to $cfg: $inc"
+        fi
+        systemctl --user enable --now topaz-session-snapshot.timer
+        systemctl --user start topaz-session-snapshot.service || :
+        echo "Session snapshots every 2 minutes; next niri login replays the last one."
+        ;;
+    disable)
+        systemctl --user disable --now topaz-session-snapshot.timer
+        rm -f "$HOME/.config/niri/topaz-session.kdl"
+        echo "Snapshots stopped; include line left in config (harmless: optional=true)."
+        ;;
+    snapshot)
+        systemctl --user start topaz-session-snapshot.service
+        cat "$HOME/.config/niri/topaz-session.kdl" 2>/dev/null || echo "(no snapshot; not running under niri?)"
+        ;;
+    status)
+        systemctl --user list-timers topaz-session-snapshot.timer --no-pager
+        grep -qxF "$inc" "$cfg" 2>/dev/null && echo "config.kdl includes the snapshot" || echo "config.kdl does NOT include the snapshot (run: just session-restore enable)"
+        cat "$HOME/.config/niri/topaz-session.kdl" 2>/dev/null || echo "(no snapshot yet)"
+        ;;
+    *)
+        echo "action must be enable|disable|snapshot|status" >&2
+        exit 1
+        ;;
+    esac
+
 # KDE Connect from a distrobox: daemon, SMS app, and indicator at git
 # speed. Image-hosted history: baked while no Flatpak channel existed,
 # evicted 2026-08-14 (topaz-os ledger 0026) after the image's unmaintained

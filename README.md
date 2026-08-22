@@ -82,6 +82,13 @@ this checkout and what is installed, read-only, exit 1 on divergence.
 - **`just touchpad-dwt`** — opt out of libinput's disable-while-typing
   (keyboard-plus-touchpad play, e.g. FPS controls); `enabled=true` restores
   the default.
+- **`just session-restore`** — on the niri session, a user timer snapshots
+  the open windows (workspace/column order) into
+  `~/.config/niri/topaz-session.kdl` as `spawn-at-startup` lines, included
+  from `config.kdl`, so the next login reopens the same apps in the same
+  order. Identities only: neither niri nor cosmic-session speaks a session
+  management protocol, so window contents do not come back. No-op under
+  the stock COSMIC session.
 - **`just kdeconnect`** — KDE Connect (daemon, SMS app, indicator) from a
   Fedora distrobox: no Flatpak channel exists, and the container shares the
   host session bus and `$HOME`, so pairing state, notifications, and the

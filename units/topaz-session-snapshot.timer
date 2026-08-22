@@ -1,0 +1,9 @@
+[Unit]
+Description=Periodic niri session snapshot
+
+[Timer]
+OnCalendar=*:0/2
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

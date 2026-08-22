@@ -1,0 +1,6 @@
+[Unit]
+Description=Snapshot the niri window layout for restore at next login
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/topaz-session-snapshot
