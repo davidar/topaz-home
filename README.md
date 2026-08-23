@@ -83,12 +83,13 @@ this checkout and what is installed, read-only, exit 1 on divergence.
   (keyboard-plus-touchpad play, e.g. FPS controls); `enabled=true` restores
   the default.
 - **`just session-restore`** — on the niri session, a user timer snapshots
-  the open windows (workspace/column order) into
-  `~/.config/niri/topaz-session.kdl` as `spawn-at-startup` lines, included
-  from `config.kdl`, so the next login reopens the same apps in the same
-  order. Identities only: neither niri nor cosmic-session speaks a session
-  management protocol, so window contents do not come back. No-op under
-  the stock COSMIC session.
+  the open windows (output, workspace, column order, floating) to
+  `~/.local/state/topaz/session.json`; a generated `topaz-session.kdl`
+  include spawns `topaz-session-restore` at login, which launches the apps
+  and moves each window to its workspace as it opens (by index, so
+  workspaces stay dynamic). Identities only: neither niri nor
+  cosmic-session speaks a session management protocol, so window contents
+  do not come back. No-op under the stock COSMIC session.
 - **`just kdeconnect`** — KDE Connect (daemon, SMS app, indicator) from a
   Fedora distrobox: no Flatpak channel exists, and the container shares the
   host session bus and `$HOME`, so pairing state, notifications, and the

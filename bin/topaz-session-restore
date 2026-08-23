@@ -1,0 +1,174 @@
+#!/usr/bin/bash
+# Replay the window layout saved by topaz-session-snapshot: launch every
+# desktop entry in the plan, then watch niri's event stream and move each
+# window to its workspace as it opens. Workspaces are addressed by index,
+# not name, so the dynamic workspace model is untouched: moving a window
+# to the trailing empty workspace creates the next one, and every move
+# runs lowest-workspace-first so the indices fill in order however the
+# apps race. A final pass restores column order, floating state and
+# focus once everything has arrived (or the deadline passes).
+#
+# Spawned by the generated ~/.config/niri/topaz-session.kdl include;
+# `just session-restore replay` runs it by hand.
+
+set -euo pipefail
+
+plan="${TOPAZ_SESSION_PLAN:-${XDG_STATE_HOME:-$HOME/.local/state}/topaz/session.json}"
+deadline="${TOPAZ_SESSION_TIMEOUT:-120}"
+
+[ -s "$plan" ] || exit 0
+
+# Under niri's spawn-at-startup NIRI_SOCKET is inherited; by hand it may
+# not be (see topaz-session-snapshot for the socket name convention).
+if [ -z "${NIRI_SOCKET:-}" ] || [ ! -S "$NIRI_SOCKET" ]; then
+    unset NIRI_SOCKET
+    for sock in "${XDG_RUNTIME_DIR:-/run/user/$UID}"/niri."${WAYLAND_DISPLAY:-wayland-1}".*.sock; do
+        [ -S "$sock" ] || continue
+        pid=${sock%.sock}; pid=${pid##*.}
+        if [ -d "/proc/$pid" ]; then
+            export NIRI_SOCKET="$sock"
+            break
+        fi
+    done
+fi
+[ -n "${NIRI_SOCKET:-}" ] || exit 0
+
+# niri gives startup children no useful stdio; keep a trail in the journal.
+if [ ! -t 2 ] && command -v systemd-cat >/dev/null; then
+    exec 2> >(systemd-cat -t topaz-session-restore) 1>&2
+fi
+
+mapfile -t slots < <(jq -c '.windows[]' "$plan")
+focused_slot=$(jq -r '.focused // ""' "$plan")
+[ "${#slots[@]}" -gt 0 ] || exit 0
+
+# Windows already open (e.g. from other spawn-at-startup lines) are not
+# ours to place, whatever their app-id.
+declare -A ignored
+while read -r id; do ignored[$id]=1; done < <(niri msg -j windows | jq -r '.[].id')
+
+declare -a slot_window=()        # slot index -> window id, once matched
+declare -A window_slot=()        # window id -> slot index
+pending=${#slots[@]}
+
+for i in "${!slots[@]}"; do
+    entry=$(jq -r .entry <<< "${slots[$i]}")
+    setsid -f gtk-launch "$entry" </dev/null >/dev/null 2>&1 || echo "gtk-launch $entry failed" >&2
+done
+
+# Move every matched window to its workspace (and output), lowest target
+# first so each move only ever needs the trailing empty workspace to
+# exist. Floating state is restored here too. Idempotent: re-run freely.
+place() {
+    local state workspaces moves
+    state=$(niri msg -j windows) || return 0
+    workspaces=$(niri msg -j workspaces) || return 0
+    local assigned="[]"
+    for i in "${!slot_window[@]}"; do
+        assigned=$(jq -c --argjson i "$i" --argjson id "${slot_window[$i]}" --argjson s "${slots[$i]}" \
+            '. + [$s + {slot: $i, id: $id}]' <<< "$assigned")
+    done
+    moves=$(jq -rn --argjson w "$state" --argjson ws "$workspaces" --argjson a "$assigned" '
+        ($ws | map({key: (.id|tostring), value: {idx, output, is_active}}) | from_entries) as $wsmap
+        | ($ws | map(.output) | unique) as $outputs
+        | ($w | map({key: (.id|tostring), value: .}) | from_entries) as $win
+        | ($w | group_by(.workspace_id) | map({key: (.[0].workspace_id|tostring), value: length}) | from_entries) as $count
+        | $a | sort_by(.ws, .col, .row) | .[]
+        | . as $t | ($win[(.id|tostring)] // empty) as $cur
+        | ($wsmap[($cur.workspace_id|tostring)] // {}) as $cws
+        # Moving the sole window off an inactive workspace toward a higher
+        # index is a no-op: the emptied workspace collapses and the window
+        # lands back on the same index. Wait for a lower slot to fill.
+        | (($count[($cur.workspace_id|tostring)] // 0) == 1 and ($cws.is_active | not) and $t.ws > $cws.idx) as $stuck
+        | (if $t.output != null and ($outputs | index($t.output)) != null
+              and $cws.output != $t.output then "\($t.id) monitor \($t.output)" else empty end),
+          (if $t.ws != 9999 and $cws.idx != $t.ws and ($stuck | not) then "\($t.id) workspace \($t.ws)" else empty end),
+          (if $t.floating and ($cur.is_floating | not) then "\($t.id) floating" else empty end)')
+    local id what arg
+    while read -r id what arg; do
+        [ -n "$id" ] || continue
+        case "$what" in
+        monitor)   niri msg action move-window-to-monitor --id "$id" "$arg" >/dev/null || : ;;
+        workspace) niri msg action move-window-to-workspace --window-id "$id" --focus false "$arg" >/dev/null || : ;;
+        floating)  niri msg action move-window-to-floating --id "$id" >/dev/null || : ;;
+        esac
+    done <<< "$moves"
+}
+
+# Match opened windows to plan slots by app-id, in plan order, placing
+# each as it arrives. niri reports a window before its app-id is set, so
+# null app-ids are skipped and picked up on the change event.
+while IFS= read -r ev; do
+    win=$(jq -c '.WindowOpenedOrChanged.window // empty' <<< "$ev")
+    [ -n "$win" ] || continue
+    id=$(jq -r .id <<< "$win")
+    app=$(jq -r '.app_id // ""' <<< "$win")
+    [ -n "$app" ] || continue
+    [ -z "${ignored[$id]:-}" ] && [ -z "${window_slot[$id]:-}" ] || continue
+    matched=""
+    for i in "${!slots[@]}"; do
+        [ -z "${slot_window[$i]:-}" ] || continue
+        if [ "$(jq -r .app <<< "${slots[$i]}")" = "$app" ]; then
+            matched=$i
+            break
+        fi
+    done
+    if [ -z "$matched" ]; then
+        ignored[$id]=1
+        continue
+    fi
+    slot_window[$matched]=$id
+    window_slot[$id]=$matched
+    pending=$((pending - 1))
+    place
+    [ "$pending" -gt 0 ] || break
+done < <(timeout "$deadline" niri msg -j event-stream 2>/dev/null || :)
+
+if [ "$pending" -gt 0 ]; then
+    missing=()
+    for i in "${!slots[@]}"; do
+        [ -n "${slot_window[$i]:-}" ] || missing+=("$(jq -r .app <<< "${slots[$i]}")")
+    done
+    echo "gave up after ${deadline}s; never opened: ${missing[*]}" >&2
+fi
+[ "${#slot_window[@]}" -gt 0 ] || exit 0
+
+place
+
+# Column order: per workspace, if the matched windows are not already in
+# plan order, focus each in turn and move its column to the matching
+# index. Needs focus, so it runs once, at the end, and the focus the plan
+# recorded (or the one the user had) is put back after.
+state=$(niri msg -j windows)
+prev_focus=$(jq -r 'map(select(.is_focused)) | .[0].id // ""' <<< "$state")
+assigned="[]"
+for i in "${!slot_window[@]}"; do
+    assigned=$(jq -c --argjson i "$i" --argjson id "${slot_window[$i]}" --argjson s "${slots[$i]}" \
+        '. + [$s + {slot: $i, id: $id}]' <<< "$assigned")
+done
+while read -r -a wanted; do
+    [ "${#wanted[@]}" -gt 1 ] || continue
+    ids=$(printf '%s\n' "${wanted[@]}" | jq -sc .)
+    current=$(niri msg -j windows | jq -r --argjson ids "$ids" \
+        'map(select(.id as $i | $ids | index($i))) | sort_by(.layout.pos_in_scrolling_layout[0]) | map(.id) | join(" ")')
+    [ "$current" != "${wanted[*]}" ] || continue
+    index=0
+    for id in "${wanted[@]}"; do
+        index=$((index + 1))
+        niri msg action focus-window --id "$id" >/dev/null || continue
+        niri msg action move-column-to-index "$index" >/dev/null || :
+    done
+done < <(jq -r 'map(select(.ws != 9999 and (.floating | not)))
+                | group_by([.output, .ws]) | .[]
+                | sort_by(.col, .row) | group_by(.col) | map(.[0].id) | join(" ")' <<< "$assigned")
+
+focus_id=""
+if [ -n "$focused_slot" ] && [ -n "${slot_window[$focused_slot]:-}" ]; then
+    focus_id=${slot_window[$focused_slot]}
+elif [ -n "$prev_focus" ]; then
+    focus_id=$prev_focus
+fi
+current_focus=$(niri msg -j windows | jq -r 'map(select(.is_focused)) | .[0].id // ""')
+if [ -n "$focus_id" ] && [ "$focus_id" != "$current_focus" ]; then
+    niri msg action focus-window --id "$focus_id" >/dev/null || :
+fi

@@ -264,17 +264,22 @@ touchpad-dwt enabled="false":
     fi
     echo "disable-while-typing -> {{ enabled }} (cosmic-comp applies it live)"
 
-# Reopen last session's apps on niri: enable|disable|snapshot|status
+# Reopen last session's windows on niri: enable|disable|snapshot|replay|status
 session-restore action="status": apply
     #!/usr/bin/bash
     set -euo pipefail
     cfg="$HOME/.config/niri/config.kdl"
     inc='include optional=true "topaz-session.kdl"'
+    plan="${XDG_STATE_HOME:-$HOME/.local/state}/topaz/session.json"
+    show_plan() {
+        jq -r '.windows | group_by([.output, .ws])[] | "\(.[0].output) workspace \(.[0].ws): " + (map(.entry + (if .floating then " (floating)" else "" end)) | join(" | "))' "$plan" 2>/dev/null \
+            || echo "(no snapshot yet; not running under niri?)"
+    }
     case "{{ action }}" in
     enable)
         mkdir -p "$(dirname "$cfg")"
         if ! grep -qxF "$inc" "$cfg" 2>/dev/null; then
-            printf '\n// Reopen the previous session'"'"'s apps (topaz-home session-restore).\n%s\n' "$inc" >> "$cfg"
+            printf '\n// Reopen the previous session'"'"'s windows (topaz-home session-restore).\n%s\n' "$inc" >> "$cfg"
             echo "Appended to $cfg: $inc"
         fi
         systemctl --user enable --now topaz-session-snapshot.timer
@@ -283,20 +288,23 @@ session-restore action="status": apply
         ;;
     disable)
         systemctl --user disable --now topaz-session-snapshot.timer
-        rm -f "$HOME/.config/niri/topaz-session.kdl"
+        rm -f "$HOME/.config/niri/topaz-session.kdl" "$plan"
         echo "Snapshots stopped; include line left in config (harmless: optional=true)."
         ;;
     snapshot)
         systemctl --user start topaz-session-snapshot.service
-        cat "$HOME/.config/niri/topaz-session.kdl" 2>/dev/null || echo "(no snapshot; not running under niri?)"
+        show_plan
+        ;;
+    replay)
+        "$HOME/.local/bin/topaz-session-restore"
         ;;
     status)
         systemctl --user list-timers topaz-session-snapshot.timer --no-pager
         grep -qxF "$inc" "$cfg" 2>/dev/null && echo "config.kdl includes the snapshot" || echo "config.kdl does NOT include the snapshot (run: just session-restore enable)"
-        cat "$HOME/.config/niri/topaz-session.kdl" 2>/dev/null || echo "(no snapshot yet)"
+        show_plan
         ;;
     *)
-        echo "action must be enable|disable|snapshot|status" >&2
+        echo "action must be enable|disable|snapshot|replay|status" >&2
         exit 1
         ;;
     esac
