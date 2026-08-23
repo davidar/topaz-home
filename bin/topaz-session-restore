@@ -104,7 +104,9 @@ while IFS= read -r ev; do
     id=$(jq -r .id <<< "$win")
     app=$(jq -r '.app_id // ""' <<< "$win")
     [ -n "$app" ] || continue
-    [ -z "${ignored[$id]:-}" ] && [ -z "${window_slot[$id]:-}" ] || continue
+    if [ -n "${ignored[$id]:-}" ] || [ -n "${window_slot[$id]:-}" ]; then
+        continue
+    fi
     matched=""
     for i in "${!slots[@]}"; do
         [ -z "${slot_window[$i]:-}" ] || continue
@@ -117,7 +119,7 @@ while IFS= read -r ev; do
         ignored[$id]=1
         continue
     fi
-    slot_window[$matched]=$id
+    slot_window[matched]=$id
     window_slot[$id]=$matched
     pending=$((pending - 1))
     place
