@@ -1,10 +1,15 @@
 [Unit]
 Description=Tailscale system tray icon
+# Session service: registering a tray icon needs a StatusNotifierWatcher,
+# which only exists once the panel is up. Starting from default.target at
+# boot failed the registration silently ("The name is not activatable")
+# and left no icon for the whole session.
 After=graphical-session.target
+PartOf=graphical-session.target
 
 [Service]
 Type=simple
 ExecStart=/usr/bin/tailscale systray
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target

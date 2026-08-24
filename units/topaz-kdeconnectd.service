@@ -1,6 +1,13 @@
 [Unit]
 Description=KDE Connect daemon (kdeconnect distrobox)
+# Session service: kdeconnectd is a QGuiApplication and aborts without a
+# display, and the display variables only reach the user manager once a
+# graphical session is up. WantedBy=default.target used to start it at
+# boot, before any session existed — five SIGABRTs into the start limit.
+# PartOf= stops it with the session teardown so each login gets a daemon
+# holding the live compositor's socket, not a dead one.
 After=graphical-session.target
+PartOf=graphical-session.target
 
 [Service]
 # Type=dbus + BusName: the unit counts as up once the daemon owns the
@@ -16,4 +23,4 @@ ExecStart=%h/.local/bin/topaz-kdeconnectd
 Restart=on-failure
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target
