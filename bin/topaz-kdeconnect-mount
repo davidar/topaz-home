@@ -25,6 +25,14 @@
 # usage: topaz-kdeconnect-mount mount|unmount|status|open [kdeconnect-url]
 set -euo pipefail
 
+# The x-scheme-handler resolves inside the distrobox when the indicator's
+# "Browse device" opens its URL there — but the mounts are host-side by
+# design (rclone is not in the container, and a container-namespace mount
+# would be invisible to host apps). Hop to the host before doing anything.
+if [ -f /run/.containerenv ] && command -v distrobox-host-exec > /dev/null; then
+    exec distrobox-host-exec "$0" "$@"
+fi
+
 phone_dir="$HOME/Phone"
 watchdog_pidfile="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/topaz-phone-watchdog.pid"
 

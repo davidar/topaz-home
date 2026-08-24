@@ -344,8 +344,12 @@ kdeconnect action="install": apply
         # COSMIC theming that used to live image-side now themes them from
         # inside the container (Qt picks the platformtheme plugin by the
         # XDG_CURRENT_DESKTOP the exported launcher passes through).
+        # xdg-utils: "Browse device" hands its kdeconnect:// URL to
+        # xdg-open inside the container, and fedora-toolbox ships
+        # xdg-open without xdg-mime — the handler never resolves and the
+        # URL dies in xdg-open's terminal-browser fallback list.
         distrobox enter -n kdeconnect -- sudo dnf install -y \
-            kde-connect cutecosmic-qt6 qt6ct kf6-sonnet-hunspell
+            kde-connect cutecosmic-qt6 qt6ct kf6-sonnet-hunspell xdg-utils
         # Absolute desktop-file paths: distrobox-export's name search does
         # not match reverse-DNS names. (No .settings entry exists — the
         # settings KCM opens from inside the app.)
