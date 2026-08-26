@@ -5,8 +5,10 @@
 # not name, so the dynamic workspace model is untouched: moving a window
 # to the trailing empty workspace creates the next one, and every move
 # runs lowest-workspace-first so the indices fill in order however the
-# apps race. A final pass restores column order, floating state and
-# focus once everything has arrived (or the deadline passes).
+# apps race. Electron-style splash windows are handled: a matched window
+# that closes hands its slot to a later window of the same app. A final
+# pass restores column order, floating state and focus once everything
+# has arrived and settled (or the deadline passes).
 #
 # Spawned by the generated ~/.config/niri/topaz-session.kdl include;
 # `just session-restore replay` runs it by hand.
@@ -47,9 +49,18 @@ focused_slot=$(jq -r '.focused // ""' "$plan")
 declare -A ignored
 while read -r id; do ignored[$id]=1; done < <(niri msg -j windows | jq -r '.[].id')
 
+declare -a slot_app=()           # slot index -> the app-id wanted there
 declare -a slot_window=()        # slot index -> window id, once matched
 declare -A window_slot=()        # window id -> slot index
+declare -A held=()               # window id -> app id, all its slots taken
 pending=${#slots[@]}
+for i in "${!slots[@]}"; do
+    slot_app[i]=$(jq -r .app <<< "${slots[$i]}")
+done
+
+# Connect the event stream before launching anything so a window that
+# opens instantly cannot slip in ahead of the watcher.
+exec 3< <(timeout "$deadline" niri msg -j event-stream 2>/dev/null || :)
 
 for i in "${!slots[@]}"; do
     entry=$(jq -r .entry <<< "${slots[$i]}")
@@ -98,33 +109,104 @@ place() {
 # Match opened windows to plan slots by app-id, in plan order, placing
 # each as it arrives. niri reports a window before its app-id is set, so
 # null app-ids are skipped and picked up on the change event.
-while IFS= read -r ev; do
-    win=$(jq -c '.WindowOpenedOrChanged.window // empty' <<< "$ev")
-    [ -n "$win" ] || continue
-    id=$(jq -r .id <<< "$win")
-    app=$(jq -r '.app_id // ""' <<< "$win")
-    [ -n "$app" ] || continue
-    if [ -n "${ignored[$id]:-}" ] || [ -n "${window_slot[$id]:-}" ]; then
-        continue
-    fi
-    matched=""
+#
+# Electron apps (Discord) open a short-lived splash window that claims
+# the slot, then close it once the real window is up. So a window whose
+# slots are all taken is held rather than ignored, a matched window
+# closing hands its slot to a held window of the same app, and the
+# stream is watched a little longer after the last slot fills in case a
+# splash closes late.
+claim() {
+    local id="$1" app="$2" i
     for i in "${!slots[@]}"; do
         [ -z "${slot_window[$i]:-}" ] || continue
-        if [ "$(jq -r .app <<< "${slots[$i]}")" = "$app" ]; then
-            matched=$i
-            break
+        if [ "${slot_app[$i]}" = "$app" ]; then
+            slot_window[i]=$id
+            window_slot[$id]=$i
+            pending=$((pending - 1))
+            return 0
         fi
     done
-    if [ -z "$matched" ]; then
-        ignored[$id]=1
-        continue
+    return 1
+}
+
+wants_app() {
+    local app="$1" a
+    for a in "${slot_app[@]}"; do
+        if [ "$a" = "$app" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+handle_event() {
+    local ev="$1" id app win i cand
+    id=$(jq -r '.WindowClosed.id // empty' <<< "$ev")
+    if [ -n "$id" ]; then
+        unset "held[$id]"
+        [ -n "${window_slot[$id]:-}" ] || return 0
+        i=${window_slot[$id]}
+        unset "slot_window[$i]" "window_slot[$id]"
+        pending=$((pending + 1))
+        for cand in "${!held[@]}"; do
+            if claim "$cand" "${held[$cand]}"; then
+                unset "held[$cand]"
+                place
+                break
+            fi
+        done
+        return 0
     fi
-    slot_window[matched]=$id
-    window_slot[$id]=$matched
-    pending=$((pending - 1))
-    place
-    [ "$pending" -gt 0 ] || break
-done < <(timeout "$deadline" niri msg -j event-stream 2>/dev/null || :)
+    win=$(jq -c '.WindowOpenedOrChanged.window // empty' <<< "$ev")
+    [ -n "$win" ] || return 0
+    id=$(jq -r .id <<< "$win")
+    app=$(jq -r '.app_id // ""' <<< "$win")
+    [ -n "$app" ] || return 0
+    if [ -n "${ignored[$id]:-}" ] || [ -n "${window_slot[$id]:-}" ] || [ -n "${held[$id]:-}" ]; then
+        return 0
+    fi
+    if claim "$id" "$app"; then
+        place
+    elif wants_app "$app"; then
+        held[$id]=$app
+    else
+        ignored[$id]=1
+    fi
+}
+
+# Leave once every slot has stayed filled for the grace period — longer
+# while a held window suggests a splash swap is still in flight. read's
+# timeout can split a line; the partial is kept and rejoined.
+grace="${TOPAZ_SESSION_GRACE:-10}"
+hold="${TOPAZ_SESSION_HOLD:-45}"
+settled=""
+buf=""
+while :; do
+    if IFS= read -r -u 3 -t 1 ev; then
+        handle_event "$buf$ev"
+        buf=""
+    else
+        rc=$?
+        if [ "$rc" -gt 128 ]; then
+            buf+=${ev-}
+        else
+            break        # EOF: the deadline hit or niri went away
+        fi
+    fi
+    if [ "$pending" -gt 0 ]; then
+        settled=""
+    else
+        limit=$grace
+        [ "${#held[@]}" -eq 0 ] || limit=$hold
+        if [ -z "$settled" ]; then
+            settled=$EPOCHSECONDS
+        elif [ $((EPOCHSECONDS - settled)) -ge "$limit" ]; then
+            break
+        fi
+    fi
+done
+exec 3<&-
 
 if [ "$pending" -gt 0 ]; then
     missing=()
@@ -156,8 +238,9 @@ while read -r -a wanted; do
     [ "$current" != "${wanted[*]}" ] || continue
     index=0
     for id in "${wanted[@]}"; do
-        index=$((index + 1))
+        # A window gone since the state read must not eat an index.
         niri msg action focus-window --id "$id" >/dev/null || continue
+        index=$((index + 1))
         niri msg action move-column-to-index "$index" >/dev/null || :
     done
 done < <(jq -r 'map(select(.ws != 9999 and (.floating | not)))
