@@ -377,16 +377,18 @@ kdeconnect action="install": apply
         pkill -x kdeconnectd 2>/dev/null || true
         write_activation
         systemctl --user enable --now topaz-kdeconnectd.service
-        # The indicator autostarts per session; point the autostart entry
-        # at the exported (container) copy — distrobox-export prefixes it
-        # with the container name. The already-running host indicator keeps
-        # working meanwhile — it is only a D-Bus client.
-        mkdir -p "$HOME/.config/autostart"
-        cp -f "$HOME/.local/share/applications/kdeconnect-org.kde.kdeconnect.nonplasma.desktop" \
-            "$HOME/.config/autostart/org.kde.kdeconnect.nonplasma.desktop"
+        # The indicator runs as a session unit ordered after the daemon,
+        # not via XDG autostart: autostart has no ordering against the
+        # container, and an indicator launched into it mid-restart dies
+        # silently, leaving the session without a tray icon. Remove the
+        # autostart entry earlier installs wrote (the unit replaces it at
+        # next login; `systemctl --user start` it to get the icon now).
+        rm -f "$HOME/.config/autostart/org.kde.kdeconnect.nonplasma.desktop"
+        systemctl --user enable topaz-kdeconnect-indicator.service
         echo "Daemon enabled (topaz-kdeconnectd.service); pairing state is ~/.config/kdeconnect."
         ;;
     disable)
+        systemctl --user disable --now topaz-kdeconnect-indicator.service
         systemctl --user disable --now topaz-kdeconnectd.service
         # Without this, any D-Bus request for the name would restart the
         # unit regardless of its enabled state. On a pre-eviction image

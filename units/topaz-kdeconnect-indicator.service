@@ -1,0 +1,20 @@
+[Unit]
+Description=KDE Connect tray indicator (kdeconnect distrobox)
+# Session unit replacing the XDG autostart entry: autostart has no
+# ordering against the container, and an indicator launched while the
+# kdeconnect container is mid-restart dies silently — the session then
+# runs with no tray icon. After= the daemon unit, the container is up
+# and the daemon owns the bus name before the indicator connects;
+# PartOf= stops it with the session teardown so each login gets an
+# indicator holding the live compositor's socket, not a dead one.
+After=graphical-session.target topaz-kdeconnectd.service
+Wants=topaz-kdeconnectd.service
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/distrobox-enter -n kdeconnect -- kdeconnect-indicator
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target
