@@ -23,6 +23,11 @@ wait_ssh 420 || exit 1
 echo "waiting for the user session..."
 wait_user_graphical 180 || exit 1
 
+# Screendumps bracket the visual changes: the stock session first, then
+# after each piece that repaints something.
+shot="$(screendump "$ART/screens/topaz-home-0-stock.png" || true)"
+[[ -n "$shot" ]] && echo "screendump: $shot"
+
 # Ship the working tree into the VM: tar over ssh tests these exact
 # bytes — no git and no network needed in the guest.
 tar -C "$REPO_DIR" --exclude=.git --exclude=tests -cf - . |
@@ -43,6 +48,25 @@ check "every unit file loads" \
         [ "$state" = loaded ] || echo "$u: $state"
     done'
 
+check "wallpaper sync writes cosmic config" \
+    tssh 'systemctl --user start topaz-bluefin-wallpaper.service &&
+        test -s ~/.config/cosmic/com.system76.CosmicBackground/v1/all'
+# Live, cosmic-bg repaints on its 5-minute rotation tick; the suite
+# can't wait that out, so respawn it for a deterministic screendump.
+tssh 'pkill -x cosmic-bg || true'
+
+# The dash-to-panel layout: applied files must match the repo's copies
+# (the recipe restarts cosmic-panel itself when anything changed) — the
+# screendump after the settle shows the merged bar over the Bluefin
+# artwork, minus the applets the image doesn't ship.
+check "just panel applies the layout" \
+    tssh 'cd ~/topaz-home && just panel &&
+        diff -r desktop/cosmic/com.system76.CosmicPanel.Panel \
+            ~/.config/cosmic/com.system76.CosmicPanel.Panel'
+sleep 5
+shot="$(screendump "$ART/screens/topaz-home-1-panel.png" || true)"
+[[ -n "$shot" ]] && echo "screendump: $shot"
+
 # Behavioral smoke on the pieces a bare VM session can actually run.
 # The snapshot skips an empty session by design ("just logged in" beats
 # "closed everything"), so give it one window to record; the settle
@@ -57,11 +81,8 @@ check "session snapshot plans an open window" \
         done
         TOPAZ_SESSION_SETTLE=0 "$HOME/.local/bin/topaz-session-snapshot" &&
         grep -q CosmicTerm "$HOME/.local/state/topaz/session.json"'
-check "wallpaper sync writes cosmic config" \
-    tssh 'systemctl --user start topaz-bluefin-wallpaper.service &&
-        test -s ~/.config/cosmic/com.system76.CosmicBackground/v1/all'
 
-shot="$(screendump "$ART/screens/topaz-home.png" || true)"
+shot="$(screendump "$ART/screens/topaz-home-2-final.png" || true)"
 [[ -n "$shot" ]] && echo "screendump: $shot"
 
 suite_verdict topaz-home
