@@ -125,6 +125,34 @@ tailscale-tray: apply
     systemctl --user enable --now tailscale-systray.service
     @echo "Tailscale tray enabled (unit: tailscale-systray.service)."
 
+# Copies the desktop/cosmic/ config namespaces. The layout: app list +
+# minimize buttons in the left wing, clock + minimon center, tray right;
+# the separate dock entry is dropped. Applets not installed on the host
+# (caffeine, minimon) simply don't render their segment. cosmic-panel
+# hot-reloads single keys but a wholesale swap leaves stale surfaces
+# behind (a second bar), so restart it when anything changed —
+# cosmic-session respawns it.
+
+# Dash-to-panel layout: one merged bar instead of panel + dock
+panel:
+    #!/usr/bin/bash
+    set -euo pipefail
+    changed=0
+    for ns in "$PWD"/desktop/cosmic/*; do
+        dest="$HOME/.config/cosmic/$(basename "$ns")"
+        mkdir -p "$dest"
+        while IFS= read -r f; do
+            cmp -s "$f" "$dest/${f#"$ns"/}" || changed=1
+        done < <(find "$ns" -type f)
+        cp -rf "$ns"/. "$dest"/
+    done
+    if [ "$changed" = 1 ]; then
+        pkill -x cosmic-panel || true
+        echo "Panel layout applied (panel restarted; cosmic-session respawns it)."
+    else
+        echo "Panel layout already current."
+    fi
+
 # COSMIC wallpaper follows Bluefin's monthly artwork with day/night flips
 wallpaper: apply
     systemctl --user enable --now topaz-bluefin-wallpaper.timer
