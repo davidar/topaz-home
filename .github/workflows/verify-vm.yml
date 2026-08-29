@@ -1,0 +1,109 @@
+---
+name: Verify in VM
+
+# Applies this checkout inside a booted topaz-os VM and verifies the
+# layer end to end (tests/vm-suite.sh): units load, and the pieces a
+# bare session can run leave the state they promise. Rides the topaz-os
+# VM harness (topaz-os/tests/README.md) on a free runner — QEMU/KVM
+# with the guest's GL on llvmpipe.
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: "topaz-os image to boot"
+        required: false
+        default: "quay.io/davidar/topaz-os:latest"
+      topaz-os-ref:
+        description: "topaz-os ref to take the harness from"
+        required: false
+        default: "main"
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - "README.md"
+      - "LICENSE"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  TEST_IMAGE: ${{ inputs.image || 'quay.io/davidar/topaz-os:latest' }}
+
+jobs:
+  verify-vm:
+    name: Apply and verify in QEMU
+    # 24.04, not newer: see the runner note in topaz-os's verify-vm.yml.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Checkout the topaz-os harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: davidar/topaz-os
+          ref: ${{ inputs.topaz-os-ref || 'main' }}
+          path: topaz-os
+
+      - name: Maximize build space
+        uses: ublue-os/remove-unwanted-software@695eb75bc387dbcd9685a8e72d23439d8686cba6
+
+      - name: Start resource sampler
+        run: |
+          cat > "${RUNNER_TEMP}/sample.sh" <<'EOF'
+          while true; do
+            printf '%s avail_mem=%sMiB tmp_used=%sMiB root_free=%sMiB\n' \
+              "$(date -u +%H:%M:%S)" \
+              "$(awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo)" \
+              "$(df -m --output=used /tmp | tail -1 | tr -d ' ')" \
+              "$(df -m --output=avail / | tail -1 | tr -d ' ')"
+            sleep 15
+          done
+          EOF
+          nohup bash "${RUNNER_TEMP}/sample.sh" >> "${RUNNER_TEMP}/resources.log" 2>/dev/null &
+
+      - name: Install QEMU
+        # The mesa/EGL packages back the guest's GL on llvmpipe;
+        # --no-install-recommends would otherwise leave them out.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 qemu-system-gui qemu-utils ovmf \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri libgles2
+
+      - name: Pull image under test
+        run: |
+          sudo podman pull "$TEST_IMAGE"
+          sudo podman tag "$TEST_IMAGE" localhost/topaz-os:test
+
+      - name: Boot, apply, verify
+        run: sudo bash topaz-os/tests/run.sh all "$PWD/tests/vm-suite.sh"
+
+      - name: Kernel denials (debug)
+        if: failure()
+        run: sudo dmesg | grep -iE 'apparmor|denied|audit' | tail -40 || true
+
+      - name: Collect evidence
+        if: always()
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" topaz-os/tests/.artifacts || true
+          cat "${RUNNER_TEMP}/resources.log" || true
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vm-evidence
+          path: |
+            topaz-os/tests/.artifacts/serial.log
+            topaz-os/tests/.artifacts/screens/
+          if-no-files-found: ignore
+          retention-days: 14

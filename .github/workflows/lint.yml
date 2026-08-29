@@ -19,7 +19,7 @@ jobs:
         run: just --unstable --fmt --check
 
       - name: Shell syntax
-        run: bash -n bin/*
+        run: bash -n bin/* tests/*.sh
 
       - name: ShellCheck
-        run: shellcheck bin/*
+        run: shellcheck bin/* tests/*.sh
