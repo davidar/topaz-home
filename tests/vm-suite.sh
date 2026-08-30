@@ -24,9 +24,12 @@ echo "waiting for the user session..."
 wait_user_graphical 180 || exit 1
 
 # Screendumps bracket the visual changes: the stock session first, then
-# after each piece that repaints something.
-shot="$(screendump "$ART/screens/topaz-home-0-stock.png" || true)"
-[[ -n "$shot" ]] && echo "screendump: $shot"
+# after each piece that repaints something. Each one is a counted check:
+# a failed or empty capture fails the suite, and the stock shot waits
+# for the shell to actually paint (the target goes active well before).
+wait_session_painted 120 || exit 1
+check "screendump: stock session" \
+    screendump "$ART/screens/topaz-home-0-stock.png"
 
 # Ship the working tree into the VM: tar over ssh tests these exact
 # bytes — no git and no network needed in the guest.
@@ -64,8 +67,8 @@ check "just panel applies the layout" \
         diff -r desktop/cosmic/com.system76.CosmicPanel.Panel \
             ~/.config/cosmic/com.system76.CosmicPanel.Panel'
 sleep 5
-shot="$(screendump "$ART/screens/topaz-home-1-panel.png" || true)"
-[[ -n "$shot" ]] && echo "screendump: $shot"
+check "screendump: merged panel" \
+    screendump "$ART/screens/topaz-home-1-panel.png"
 
 # Behavioral smoke on the pieces a bare VM session can actually run.
 # The snapshot skips an empty session by design ("just logged in" beats
@@ -82,7 +85,7 @@ check "session snapshot plans an open window" \
         TOPAZ_SESSION_SETTLE=0 "$HOME/.local/bin/topaz-session-snapshot" &&
         grep -q CosmicTerm "$HOME/.local/state/topaz/session.json"'
 
-shot="$(screendump "$ART/screens/topaz-home-2-final.png" || true)"
-[[ -n "$shot" ]] && echo "screendump: $shot"
+check "screendump: final with window" \
+    screendump "$ART/screens/topaz-home-2-final.png"
 
 suite_verdict topaz-home
