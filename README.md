@@ -55,6 +55,12 @@ this checkout and what is installed, read-only, exit 1 on divergence.
   placeholder; and a path unit watches the Flatpak's deploy symlink and
   bounces the app on update — otherwise the old daemon keeps running against
   replaced files and its tray registration silently dies.
+- **`just shell-watchdog`** — a user unit that fails loudly when
+  cosmic-session is running but no panel appeared after login. cosmic-session
+  waits silently forever for the compositor's environment handshake, and
+  niri 26.04 does not log a startup spawn whose binary is missing — so a
+  stale path in `~/.config/niri` costs a whole login with no clue. `just
+  check` also lints every `spawn-at-startup` target for the same reason.
 - **`just tailscale-tray`** — user unit running `tailscale systray` (ships
   with tailscale; native StatusNotifier).
 - **`just qt-dark`** — Qt Flatpaks on the KDE runtime follow GNOME dark mode

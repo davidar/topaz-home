@@ -1,0 +1,40 @@
+#!/usr/bin/bash
+# Assert that the COSMIC shell came up after login.
+#
+# cosmic-session launches the shell (panel, notifications, launcher, osd,
+# locker, idle) only once the compositor hands back its environment; it
+# waits for that handshake forever, with nothing logged. On COSMIC-on-niri
+# the handshake is a spawn-at-startup shim in the user's niri config, and
+# niri 26.04 stays silent when such a spawn fails to exec. This turns the
+# silence into a failed unit that `systemctl --user --failed`, the
+# nightshift digest and the VM suite all read. Not a COSMIC session
+# (plain niri): nothing to assert.
+set -uo pipefail
+
+timeout=${TOPAZ_SHELL_TIMEOUT:-45}
+
+if ! pgrep -x cosmic-session >/dev/null; then
+    echo "no cosmic-session in this session; nothing to assert"
+    exit 0
+fi
+
+for ((t = 0; t < timeout; t += 2)); do
+    if pgrep -x cosmic-panel >/dev/null; then
+        echo "COSMIC shell up (cosmic-panel running, ${t}s after the session target)"
+        exit 0
+    fi
+    sleep 2
+done
+
+echo "FAIL: cosmic-session is running but cosmic-panel never appeared within ${timeout}s"
+# grep must drain its input: with pipefail, -q quitting early would surface journalctl's SIGPIPE.
+if journalctl --user -b --no-pager -t cosmic-session 2>/dev/null | grep 'got environmental variables' >/dev/null; then
+    echo "  cosmic-session did receive the compositor environment, so the panel itself failed:"
+    echo "  journalctl --user -b -t cosmic-session"
+else
+    echo "  cosmic-session never received the compositor environment: on COSMIC-on-niri the"
+    echo "  cosmic-ext-alternative-startup shim did not run (niri does not log a spawn that fails to exec)"
+    "$(dirname "$0")/topaz-niri-lint" 2>&1 | sed 's/^/  /'
+    echo "  live rescue: niri msg action spawn -- /usr/bin/cosmic-ext-alternative-startup"
+fi
+exit 1

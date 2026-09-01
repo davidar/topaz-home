@@ -42,6 +42,14 @@ check "just apply installs the layer" \
 check "just check reports no drift" \
     tssh 'cd ~/topaz-home && just check'
 
+# The session in the VM is COSMIC-on-niri with a live panel, so the
+# watchdog must come back green; a red verdict here means the shell never
+# came up and every later visual check would be looking at a bare niri.
+check "shell watchdog sees the COSMIC shell" \
+    tssh 'cd ~/topaz-home && just shell-watchdog enable >/dev/null &&
+        systemctl --user start topaz-shell-watchdog.service &&
+        systemctl --user is-active topaz-shell-watchdog.service'
+
 # Every shipped unit must parse and resolve once the layer is applied —
 # a rename or a typo'd Exec path shows up here, not at next login.
 # shellcheck disable=SC2016  # $(...) expands in the guest shell

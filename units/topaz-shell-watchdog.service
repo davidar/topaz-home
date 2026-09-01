@@ -1,0 +1,19 @@
+[Unit]
+Description=Assert the COSMIC shell came up after login
+# cosmic-session waits forever for the compositor's environment
+# handshake and launches nothing until it arrives. On COSMIC-on-niri that
+# handshake is a spawn-at-startup shim in the user's niri config, and
+# niri 26.04 does not log a spawn whose binary is missing — a stale path
+# left behind by a cleanup once cost a whole login: no panel, no
+# notifications, no locker, no idle, no clue. This unit fails loudly in
+# that case; RemainAfterExit keeps the verdict visible in `status`.
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=%h/.local/bin/topaz-shell-watchdog
+
+[Install]
+WantedBy=graphical-session.target

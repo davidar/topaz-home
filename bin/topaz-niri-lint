@@ -1,0 +1,53 @@
+#!/usr/bin/bash
+# Resolve every spawn-at-startup target in the niri config tree.
+#
+# niri 26.04 does not report a startup spawn whose binary is missing: the
+# exec failure is swallowed (a spawner-thread deadlock upstream), so a
+# stale absolute path — say, a staged ~/.local/bin binary removed after it
+# was baked — costs a whole login with no visible cause. On COSMIC-on-niri
+# one of those spawns is the cosmic-ext-alternative-startup shim that hands
+# the compositor's environment to cosmic-session; without it no panel, no
+# notifications, no locker. Catch the stale path here instead.
+set -uo pipefail
+
+dir="${NIRI_CONFIG_DIR:-$HOME/.config/niri}"
+if [ ! -d "$dir" ]; then
+    echo "[ ok ] no niri config at $dir"
+    exit 0
+fi
+
+bad=0
+n=0
+while IFS= read -r line; do
+    file=${line%%:*}
+    rest=${line#*:}
+    lineno=${rest%%:*}
+    text=${rest#*:}
+    # First argument, as a plain "..." or a raw r#"..."# KDL string.
+    if [[ $text =~ spawn-at-startup[[:space:]]+r#\"([^\"]*)\"# ]] ||
+        [[ $text =~ spawn-at-startup[[:space:]]+\"([^\"]*)\" ]]; then
+        cmd=${BASH_REMATCH[1]}
+    else
+        continue
+    fi
+    n=$((n + 1))
+    case $cmd in
+    "~"*) cmd="$HOME${cmd#\~}" ;;
+    esac
+    if [[ $cmd == */* ]]; then
+        if [ ! -x "$cmd" ]; then
+            echo "MISSING: $file:$lineno: $cmd"
+            bad=1
+        fi
+    elif ! command -v "$cmd" >/dev/null 2>&1; then
+        echo "MISSING: $file:$lineno: $cmd (not in PATH)"
+        bad=1
+    fi
+done < <(grep -n -H -E '^[[:space:]]*spawn-at-startup[[:space:]]' "$dir"/*.kdl 2>/dev/null)
+
+if [ "$bad" -eq 0 ]; then
+    echo "[ ok ] $n spawn-at-startup target(s) resolve in $dir"
+else
+    echo "[FAIL] spawn-at-startup target(s) missing — niri will skip them silently at login"
+fi
+exit "$bad"

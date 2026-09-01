@@ -49,10 +49,36 @@ check:
     else
         echo "[FAIL] drift detected (see above; re-run: just apply)"
     fi
-    exit "$drift"
+    # Not drift, but the same class of silent breakage: a niri startup
+    # spawn whose binary is gone is skipped without a word at login.
+    lint=0
+    "$PWD"/bin/topaz-niri-lint || lint=1
+    exit $((drift | lint))
 
 # A daily timer digests system events into a morning report via your
 # configured TRIAGE_CMD (see share/nightshift.conf.example).
+
+# Fail a user unit loudly if the COSMIC shell is missing after login: enable|disable|status
+shell-watchdog action="enable": apply
+    #!/usr/bin/bash
+    set -euo pipefail
+    case "{{ action }}" in
+    enable)
+        systemctl --user enable topaz-shell-watchdog.service
+        echo "Enabled: runs after graphical-session.target at each login."
+        echo "Check this session now: systemctl --user start topaz-shell-watchdog.service"
+        ;;
+    disable)
+        systemctl --user disable --now topaz-shell-watchdog.service
+        ;;
+    status)
+        systemctl --user status --no-pager topaz-shell-watchdog.service || true
+        ;;
+    *)
+        echo "usage: just shell-watchdog [enable|disable|status]" >&2
+        exit 2
+        ;;
+    esac
 
 # Night-shift triage: enable|disable|run|status|report
 nightshift action="status": apply
