@@ -80,6 +80,28 @@ shell-watchdog action="enable": apply
         ;;
     esac
 
+# Panel watchdog: restart a cosmic-panel that lost its compositor connection
+panel-watchdog action="enable": apply
+    #!/usr/bin/bash
+    set -euo pipefail
+    case "{{ action }}" in
+    enable)
+        systemctl --user enable --now topaz-panel-watchdog.timer
+        echo "Enabled: checks every 20 s while a graphical session is up."
+        ;;
+    disable)
+        systemctl --user disable --now topaz-panel-watchdog.timer
+        ;;
+    status)
+        TOPAZ_PANEL_WATCHDOG_DRY_RUN=1 "$HOME/.local/bin/topaz-panel-watchdog"
+        systemctl --user list-timers --no-pager topaz-panel-watchdog.timer || true
+        ;;
+    *)
+        echo "usage: just panel-watchdog [enable|disable|status]" >&2
+        exit 2
+        ;;
+    esac
+
 # Night-shift triage: enable|disable|run|status|report
 nightshift action="status": apply
     #!/usr/bin/bash

@@ -1,0 +1,12 @@
+[Unit]
+Description=Check the COSMIC panel every 20 s for a dead compositor connection
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Timer]
+OnActiveSec=30s
+OnUnitActiveSec=20s
+AccuracySec=5s
+
+[Install]
+WantedBy=graphical-session.target

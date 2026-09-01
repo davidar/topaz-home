@@ -61,6 +61,10 @@ this checkout and what is installed, read-only, exit 1 on divergence.
   niri 26.04 does not log a startup spawn whose binary is missing — so a
   stale path in `~/.config/niri` costs a whole login with no clue. `just
   check` also lints every `spawn-at-startup` target for the same reason.
+- **`just panel-watchdog`** — a timer that restarts cosmic-panel when the
+  compositor has dropped its connection: the panel does not exit in that
+  state (no surfaces, a protocol-error log line per loop), so nothing
+  else ever respawns it. Verdict comes from `niri msg layers`.
 - **`just tailscale-tray`** — user unit running `tailscale systray` (ships
   with tailscale; native StatusNotifier).
 - **`just qt-dark`** — Qt Flatpaks on the KDE runtime follow GNOME dark mode

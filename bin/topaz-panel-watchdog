@@ -1,0 +1,105 @@
+#!/usr/bin/bash
+# Restart a cosmic-panel that has lost its compositor connection.
+#
+# When the compositor kills the panel's Wayland connection (a protocol
+# error in the panel or any of its applets' popups), cosmic-panel does not
+# exit: it stays alive spinning on the dead connection, logging a protocol
+# error per iteration, with every surface gone. Nothing restarts it —
+# cosmic-session's launch-pad and a Restart= unit both wait for an exit
+# that never comes. This runs from a timer and treats "panel process older
+# than the grace period, at least one output, none of the panel's layer
+# surfaces known to niri" as that state, then restarts the panel the way
+# its session expects: the topaz-panel unit where it is one, a signal
+# where cosmic-session owns it (it respawns on a non-zero exit). Not niri
+# (stock COSMIC): nothing to watch.
+#
+#   TOPAZ_PANEL_WATCHDOG_DRY_RUN=1   report, never act
+#   TOPAZ_PANEL_WATCHDOG_GRACE=20    seconds a fresh panel gets to map
+set -uo pipefail
+
+dry_run=${TOPAZ_PANEL_WATCHDOG_DRY_RUN:-0}
+grace=${TOPAZ_PANEL_WATCHDOG_GRACE:-20}
+state="${XDG_RUNTIME_DIR:-/tmp}/topaz-panel-watchdog.restarts"
+
+if [ -z "${NIRI_SOCKET:-}" ]; then
+    NIRI_SOCKET=$(systemctl --user show-environment 2>/dev/null | sed -n 's/^NIRI_SOCKET=//p')
+    export NIRI_SOCKET
+fi
+if [ -z "$NIRI_SOCKET" ] || [ ! -S "$NIRI_SOCKET" ]; then
+    echo "no niri socket; nothing to watch"
+    exit 0
+fi
+
+pid=$(pgrep -o -x cosmic-panel) || { echo "no cosmic-panel running; nothing to watch"; exit 0; }
+age=$(ps -o etimes= -p "$pid" | tr -d ' ')
+if [ "${age:-0}" -lt "$grace" ]; then
+    echo "cosmic-panel $pid is ${age}s old; inside the ${grace}s grace period"
+    exit 0
+fi
+
+# The panel's layer namespaces are its configured entry names.
+entries_file=""
+for f in "${XDG_CONFIG_HOME:-$HOME/.config}/cosmic/com.system76.CosmicPanel/v1/entries" \
+         /usr/share/cosmic/com.system76.CosmicPanel/v1/entries; do
+    [ -r "$f" ] && { entries_file=$f; break; }
+done
+mapfile -t entries < <({ [ -n "$entries_file" ] && grep -o '"[^"]*"' "$entries_file" | tr -d '"'; } || true)
+[ "${#entries[@]}" -gt 0 ] || entries=(Panel Dock)
+
+verdict=$(niri msg -j outputs 2>/dev/null | python3 -c '
+import json, sys
+outputs = json.load(sys.stdin)
+layers = json.loads(sys.argv[1])
+entries = sys.argv[2:]
+if not outputs:
+    print("no outputs (lid closed / display off); the panel has nothing to map on")
+    sys.exit(0)
+mapped = sorted({l["namespace"] for l in layers if l["namespace"] in entries})
+if mapped:
+    print("healthy: layer surfaces mapped for " + ", ".join(mapped))
+    sys.exit(0)
+print("DEAD: cosmic-panel is running but none of its layer surfaces (" + ", ".join(entries) + ") are known to niri")
+sys.exit(3)
+' "$(niri msg -j layers 2>/dev/null || echo '[]')" "${entries[@]}")
+rc=$?
+echo "cosmic-panel $pid (${age}s): $verdict"
+[ "$rc" -eq 3 ] || exit "$rc"
+
+# Crash-loop guard: three restarts in ten minutes means the panel is dying
+# for a reason a restart will not fix; stop and stay failed so it is seen.
+now=$(date +%s)
+recent=0
+if [ -r "$state" ]; then
+    while read -r ts; do
+        [ "$((now - ts))" -lt 600 ] && recent=$((recent + 1))
+    done < "$state"
+fi
+if [ "$recent" -ge 3 ]; then
+    echo "FAIL: $recent restarts in the last 10 minutes; not restarting again (rm $state to re-arm)"
+    exit 1
+fi
+
+if [ "$dry_run" = 1 ]; then
+    echo "dry run: would restart cosmic-panel $pid"
+    exit 0
+fi
+echo "$now" >> "$state"
+
+if systemctl --user is-active --quiet topaz-panel.service; then
+    echo "restarting topaz-panel.service"
+    systemctl --user restart topaz-panel.service
+else
+    # cosmic-session respawns a child that exits unsuccessfully; a process
+    # spinning on a dead connection may not honour TERM, so escalate.
+    echo "signalling cosmic-panel $pid for cosmic-session to respawn"
+    kill -TERM "$pid" 2>/dev/null
+    for _ in 1 2 3 4 5; do
+        sleep 1
+        kill -0 "$pid" 2>/dev/null || break
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        echo "cosmic-panel $pid ignored TERM; sending KILL"
+        kill -KILL "$pid" 2>/dev/null
+    fi
+fi
+echo "restart requested; the next tick verifies the new panel"

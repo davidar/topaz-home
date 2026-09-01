@@ -1,0 +1,12 @@
+[Unit]
+Description=Restart a cosmic-panel that has lost its compositor connection
+# cosmic-panel does not exit when the compositor drops its connection: it
+# stays alive with no surfaces, and neither cosmic-session's launch-pad
+# nor a Restart= unit acts on a process that never exits. The timer runs
+# this check; it restarts the panel only when its layer surfaces are gone
+# from niri while an output exists and the process is past its grace.
+PartOf=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/topaz-panel-watchdog
