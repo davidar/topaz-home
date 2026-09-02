@@ -1,0 +1,12 @@
+[Unit]
+Description=Check the Dropbox daemon every minute
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Timer]
+OnActiveSec=90s
+OnUnitActiveSec=60s
+AccuracySec=10s
+
+[Install]
+WantedBy=graphical-session.target

@@ -211,16 +211,44 @@ wallpaper: apply
 dropbox: apply
     #!/usr/bin/bash
     set -euo pipefail
-    flatpak install -y flathub com.dropbox.Client
+    flatpak install -y --system flathub com.dropbox.Client
+    # The path unit this replaced could not see a Flatpak deploy (systemd
+    # follows the symlink); retire any installed copy.
+    systemctl --user disable --now topaz-dropbox-restart.path 2>/dev/null || true
+    rm -f "$HOME/.config/systemd/user/topaz-dropbox-restart.path" \
+          "$HOME/.config/systemd/user/topaz-dropbox-restart.service"
+    systemctl --user daemon-reload
     systemctl --user enable --now topaz-dropbox.service
-    systemctl --user enable --now topaz-dropbox-restart.path
+    systemctl --user enable --now topaz-dropbox-watchdog.timer
     echo "Dropbox installed and started. Link the account via the app window."
     echo "If the tray icon shows as a broken image, restart the panel once:"
     echo "  pkill cosmic-panel   # cosmic-session respawns it"
-    echo "Flatpak updates restart the daemon automatically (the stale binary"
-    echo "would otherwise keep running with a dead tray registration)."
-    echo "Manual restarts need 'flatpak kill com.dropbox.Client' first (the"
-    echo "daemon lives in a Flatpak scope, outside the unit's cgroup)."
+    echo "The watchdog timer relaunches the daemon when it exits and restarts"
+    echo "it after Flatpak updates (the stale binary would otherwise keep"
+    echo "running with a dead tray registration). 'dropbox stop' will not"
+    echo "stick while it is enabled: just dropbox-watchdog disable."
+
+# Keep the Dropbox daemon running and current: enable|disable|status
+dropbox-watchdog action="enable": apply
+    #!/usr/bin/bash
+    set -euo pipefail
+    case "{{ action }}" in
+    enable)
+        systemctl --user enable --now topaz-dropbox-watchdog.timer
+        echo "Enabled: checks every minute while a graphical session is up."
+        ;;
+    disable)
+        systemctl --user disable --now topaz-dropbox-watchdog.timer
+        ;;
+    status)
+        TOPAZ_DROPBOX_WATCHDOG_DRY_RUN=1 "$HOME/.local/bin/topaz-dropbox-watchdog" check
+        systemctl --user list-timers --no-pager topaz-dropbox-watchdog.timer || true
+        ;;
+    *)
+        echo "usage: just dropbox-watchdog [enable|disable|status]" >&2
+        exit 2
+        ;;
+    esac
 
 # Run Electron Flatpaks Wayland-native (grants the Wayland socket + ozone hint;
 # note Discord stable ignores it — its bootstrap forces the platform post-argv)

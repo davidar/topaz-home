@@ -57,6 +57,14 @@ check "panel watchdog sees the panel's layer surfaces" \
         TOPAZ_PANEL_WATCHDOG_GRACE=0 systemctl --user start topaz-panel-watchdog.service &&
         systemctl --user is-active topaz-panel-watchdog.timer'
 
+# No Dropbox Flatpak in the VM: the watchdog must say so and do nothing,
+# and its timer must be schedulable.
+check "dropbox watchdog is inert without the Flatpak" \
+    tssh 'cd ~/topaz-home && just dropbox-watchdog enable >/dev/null &&
+        systemctl --user start topaz-dropbox-watchdog.service &&
+        ~/.local/bin/topaz-dropbox-watchdog check | grep -q "not installed" &&
+        systemctl --user is-active topaz-dropbox-watchdog.timer'
+
 # Every shipped unit must parse and resolve once the layer is applied —
 # a rename or a typo'd Exec path shows up here, not at next login.
 # shellcheck disable=SC2016  # $(...) expands in the guest shell

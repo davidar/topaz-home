@@ -13,8 +13,11 @@ ExecStartPre=%h/.local/bin/topaz-dropbox-icons
 ExecStartPre=-/bin/sh -c 'timeout 30 sh -c "until busctl --user status org.kde.StatusNotifierWatcher >/dev/null 2>&1; do sleep 1; done"'
 # `dropbox start` hands the daemon to the Flatpak session helper (it lives in
 # an app scope outside this unit) and exits — hence oneshot. A real restart
-# needs `flatpak kill com.dropbox.Client` first, not systemctl.
+# needs `flatpak kill com.dropbox.Client` first, not systemctl; the watchdog
+# timer does that when the daemon is gone or the Flatpak has updated.
 ExecStart=/usr/bin/flatpak run --command=/app/bin/dropbox com.dropbox.Client start
+# Remember which deploy this daemon came from, for the watchdog's staleness check.
+ExecStartPost=%h/.local/bin/topaz-dropbox-watchdog record
 
 [Install]
 WantedBy=default.target

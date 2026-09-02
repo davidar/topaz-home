@@ -1,0 +1,13 @@
+[Unit]
+Description=Relaunch the Dropbox daemon when it is gone or outdated
+# The daemon runs outside its launcher's cgroup and exits on its own
+# (silently, after a release it cannot self-install); a Flatpak update
+# leaves the old daemon running with a dead tray registration, and a path
+# unit on the deploy symlink never sees the swap. The timer runs this
+# check: start when no instance runs, restart when the deployed build
+# differs from the one recorded at launch.
+PartOf=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/topaz-dropbox-watchdog check

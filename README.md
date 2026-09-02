@@ -52,9 +52,11 @@ this checkout and what is installed, read-only, exit 1 on divergence.
   exits (the daemon lives outside the unit's cgroup — restarts need
   `flatpak kill`); a helper syncs the sandbox-private tray icons into the
   user icon theme, without which COSMIC's panel renders a missing-image
-  placeholder; and a path unit watches the Flatpak's deploy symlink and
-  bounces the app on update — otherwise the old daemon keeps running against
-  replaced files and its tray registration silently dies.
+  placeholder; and a watchdog timer (`just dropbox-watchdog`) relaunches
+  the daemon when it quits on its own and bounces it after a Flatpak update
+  — otherwise the old daemon keeps running against replaced files and its
+  tray registration silently dies. A path unit on the deploy symlink cannot
+  do this: systemd follows the link, and a deploy never touches the target.
 - **`just shell-watchdog`** — a user unit that fails loudly when
   cosmic-session is running but no panel appeared after login. cosmic-session
   waits silently forever for the compositor's environment handshake, and

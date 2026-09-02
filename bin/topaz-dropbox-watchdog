@@ -1,0 +1,117 @@
+#!/usr/bin/bash
+# Keep the Dropbox Flatpak daemon running, and running the deployed build.
+#
+# Two ways the daemon goes missing, neither of which anything else repairs:
+#
+# - It exits on its own. `dropbox start` hands the daemon to the Flatpak
+#   session helper and returns, so the launcher unit is a oneshot with no
+#   process to supervise. The daemon has been seen quitting silently
+#   hours after a start, lining up with an upstream release the sandbox
+#   will not let it self-install.
+# - The Flatpak updates underneath it. The old daemon keeps running
+#   against replaced files with a tray registration that dies, and a path
+#   unit on the deploy symlink cannot see the swap: systemd follows the
+#   symlink and watches the deployed directory, which a deploy never
+#   touches (verified with a transient path unit on a mock deploy).
+#
+# So a timer runs this instead: relaunch when no instance is running,
+# restart when the deployed build differs from the one the launcher
+# recorded. Inert when the Flatpak is not installed.
+#
+#   TOPAZ_DROPBOX_WATCHDOG_DRY_RUN=1   report, never act
+#   TOPAZ_DROPBOX_FLATPAK_ROOTS        install roots to scan (tests)
+set -uo pipefail
+
+app=com.dropbox.Client
+dry_run=${TOPAZ_DROPBOX_WATCHDOG_DRY_RUN:-0}
+runtime="${XDG_RUNTIME_DIR:-/tmp}"
+record="$runtime/topaz-dropbox.deployed"
+state="$runtime/topaz-dropbox-watchdog.restarts"
+launcher=topaz-dropbox.service
+
+deployed() {
+    local root
+    for root in ${TOPAZ_DROPBOX_FLATPAK_ROOTS:-/var/lib/flatpak "$HOME/.local/share/flatpak"}; do
+        [ -L "$root/app/$app/current/active" ] || continue
+        readlink -f "$root/app/$app/current/active"
+        return 0
+    done
+    return 1
+}
+
+running() {
+    flatpak ps --columns=application 2>/dev/null | grep -qx "$app"
+}
+
+case "${1:-check}" in
+record)
+    # Called by the launcher after `dropbox start`: remember which deploy
+    # this daemon came from so a later update is detectable.
+    if d=$(deployed); then
+        echo "$d" > "$record"
+        echo "recorded deploy $d"
+    fi
+    exit 0
+    ;;
+check) ;;
+*)
+    echo "usage: topaz-dropbox-watchdog [check|record]" >&2
+    exit 2
+    ;;
+esac
+
+if ! current=$(deployed); then
+    echo "$app is not installed; nothing to watch"
+    exit 0
+fi
+
+if systemctl --user is-active --quiet "$launcher"; then
+    echo "$launcher is still starting; checking next tick"
+    exit 0
+fi
+
+if running; then
+    recorded=$(cat "$record" 2>/dev/null || true)
+    if [ -z "$recorded" ]; then
+        # Started outside the launcher (or before this watchdog): adopt the
+        # current deploy as its origin rather than restart on a guess.
+        echo "$current" > "$record"
+        echo "healthy: daemon running; adopted deploy $current"
+        exit 0
+    fi
+    if [ "$recorded" = "$current" ]; then
+        echo "healthy: daemon running on the deployed build"
+        exit 0
+    fi
+    reason="running stale build $(basename "$recorded" | cut -c1-12), deployed is $(basename "$current" | cut -c1-12)"
+else
+    reason="no daemon instance running"
+fi
+
+# Crash-loop guard: three restarts in ten minutes means the daemon is
+# dying for a reason a restart will not fix (a self-update it cannot
+# apply, a broken account); stop and stay failed so it is seen.
+now=$(date +%s)
+recent=0
+if [ -r "$state" ]; then
+    while read -r ts; do
+        [ "$((now - ts))" -lt 600 ] && recent=$((recent + 1))
+    done < "$state"
+fi
+if [ "$recent" -ge 3 ]; then
+    echo "FAIL: $reason; $recent restarts in the last 10 minutes, not restarting again (rm $state to re-arm)"
+    exit 1
+fi
+
+if [ "$dry_run" = 1 ]; then
+    echo "dry run: $reason; would restart $launcher"
+    exit 0
+fi
+echo "$now" >> "$state"
+echo "$reason; restarting $launcher"
+# The daemon lives in a Flatpak app scope, outside the launcher's cgroup,
+# so a unit restart alone would leave it running: kill the instance first
+# (tolerating "not running"), then relaunch. The launcher re-syncs the
+# versioned tray icons and re-records the deploy.
+flatpak kill "$app" 2>/dev/null || true
+systemctl --user restart "$launcher"
