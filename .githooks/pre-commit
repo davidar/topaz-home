@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Run tests/lint.sh against the staged content before every commit —
+# the same checks the Lint workflow runs, so a red CI job is caught
+# here first.
+#
+# Enable with: git config core.hooksPath .githooks
+set -euo pipefail
+
+# Lint the index, not the working tree: export the staged tree to a
+# scratch directory and run the checks there.
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+git checkout-index --all --prefix="$tmp/"
+LINT_REQUIRE_ACTIONLINT=1 bash "$tmp/tests/lint.sh"

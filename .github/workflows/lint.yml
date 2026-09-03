@@ -15,11 +15,7 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
 
-      - name: Check justfile formatting
-        run: just --unstable --fmt --check
-
-      - name: Shell syntax
-        run: bash -n bin/* tests/*.sh
-
-      - name: ShellCheck
-        run: shellcheck bin/* tests/*.sh
+      # ShellCheck and Python ship on the runner; actionlint is optional
+      # in the script and GitHub already refuses an invalid workflow.
+      - name: Lint
+        run: bash tests/lint.sh

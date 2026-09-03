@@ -26,6 +26,8 @@ are symlinked into the checkout, so a `git pull` is instantly live; systemd
 unit files are copied into `~/.config/systemd/user/` (a dangling symlinked
 unit silently unloads — copies cannot). `just check` reports drift between
 this checkout and what is installed, read-only, exit 1 on divergence.
+For contributors: `git config core.hooksPath .githooks` runs the same
+static checks as CI (`tests/lint.sh`) on every commit.
 
 ## Components
 
