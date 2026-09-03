@@ -106,8 +106,10 @@ this checkout and what is installed, read-only, exit 1 on divergence.
   Fedora distrobox: no Flatpak channel exists, and the container shares the
   host session bus and `$HOME`, so pairing state, notifications, and the
   tray behave natively. `install` builds the container and exports the
-  apps; `enable` runs the daemon as a user service. Device browse mounts
-  the phone inside the container (`distrobox enter kdeconnect`).
+  apps; `enable` runs the daemon as a user service plus a listener that
+  announces files shared from the phone (KDE Connect only reports them
+  through Plasma's job server). Device browse mounts the phone inside the
+  container (`distrobox enter kdeconnect`).
 
 ## Relationship to topaz-os
 

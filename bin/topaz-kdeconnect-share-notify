@@ -1,0 +1,165 @@
+#!/usr/bin/python3
+"""Notify when KDE Connect saves a file shared from the phone.
+
+KDE Connect reports finished transfers only through KIO's job tracker,
+which talks to Plasma's job server (org.kde.kuiserver). Without Plasma
+the lookup fails, the fallback progress widget never shows for a
+transfer that finishes in under a second, and the file lands in
+Downloads with no sign on screen. The share plugin does still emit
+shareReceived on the session bus with the saved path, so this listener
+turns that signal into a desktop notification. Clicking it reveals the
+file in the file manager (cosmic-notifications renders no action
+buttons, so the click carries the default action); Open and Show in
+folder are also listed for notification daemons that draw buttons.
+
+Only local files are announced: the same signal carries the URL of a
+shared link (already opened in the browser) and the temp file of a
+shared text (already on the clipboard, with its own notification).
+
+usage: topaz-kdeconnect-share-notify            # run the listener
+       topaz-kdeconnect-share-notify test FILE  # post one notification
+"""
+
+import os
+import sys
+import urllib.parse
+
+import gi
+
+gi.require_version("Gio", "2.0")
+from gi.repository import Gio, GLib  # noqa: E402
+
+KDECONNECT = "org.kde.kdeconnect"
+SHARE_IFACE = "org.kde.kdeconnect.device.share"
+DEVICE_IFACE = "org.kde.kdeconnect.device"
+NOTIFY_NAME = "org.freedesktop.Notifications"
+NOTIFY_PATH = "/org/freedesktop/Notifications"
+FILEMANAGER_NAME = "org.freedesktop.FileManager1"
+FILEMANAGER_PATH = "/org/freedesktop/FileManager1"
+APP_NAME = "KDE Connect"
+ICON = "folder-download"
+
+
+def log(msg):
+    print(msg, file=sys.stderr, flush=True)
+
+
+def local_path(url):
+    """The local path a shareReceived argument names, or None."""
+    if url.startswith("/"):
+        return url
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme != "file":
+        return None
+    return urllib.parse.unquote(parts.path)
+
+
+class Notifier:
+    def __init__(self, bus):
+        self.bus = bus
+        self.pending = {}  # notification id -> file path
+        bus.signal_subscribe(
+            KDECONNECT, SHARE_IFACE, "shareReceived", None, None,
+            Gio.DBusSignalFlags.NONE, self.on_share)
+        bus.signal_subscribe(
+            NOTIFY_NAME, NOTIFY_NAME, "ActionInvoked", NOTIFY_PATH, None,
+            Gio.DBusSignalFlags.NONE, self.on_action)
+        bus.signal_subscribe(
+            NOTIFY_NAME, NOTIFY_NAME, "NotificationClosed", NOTIFY_PATH, None,
+            Gio.DBusSignalFlags.NONE, self.on_closed)
+
+    def device_name(self, share_path):
+        device_path = share_path.rsplit("/", 1)[0]
+        try:
+            reply = self.bus.call_sync(
+                KDECONNECT, device_path, "org.freedesktop.DBus.Properties",
+                "Get", GLib.Variant("(ss)", (DEVICE_IFACE, "name")),
+                GLib.VariantType("(v)"), Gio.DBusCallFlags.NONE, 2000, None)
+            return reply.unpack()[0]
+        except GLib.Error as e:
+            log(f"device name lookup failed: {e.message}")
+            return "your phone"
+
+    def on_share(self, conn, sender, path, iface, signal, params):
+        url = params.unpack()[0]
+        file = local_path(url)
+        if file is None:
+            return
+        if not os.path.exists(file):
+            log(f"ignoring shareReceived for a path that does not exist: {file}")
+            return
+        self.notify(file, self.device_name(path))
+
+    def notify(self, file, device):
+        # cosmic-notifications draws no action buttons: a click on the card
+        # invokes "default". Revealing the file in the file manager is the
+        # one action a click can carry; the others stay listed for daemons
+        # that do render buttons.
+        actions = ["default", "Show in folder", "folder", "Show in folder", "open", "Open"]
+        hints = {"urgency": GLib.Variant("y", 1)}
+        mime, _ = Gio.content_type_guess(file, None)
+        if mime.startswith("image/"):
+            hints["image-path"] = GLib.Variant("s", file)
+        summary = f"File received from {device}"
+        body = os.path.basename(file)
+        try:
+            reply = self.bus.call_sync(
+                NOTIFY_NAME, NOTIFY_PATH, NOTIFY_NAME, "Notify",
+                GLib.Variant("(susssasa{sv}i)",
+                             (APP_NAME, 0, ICON, summary, body, actions, hints, -1)),
+                GLib.VariantType("(u)"), Gio.DBusCallFlags.NONE, 5000, None)
+        except GLib.Error as e:
+            log(f"Notify failed for {file}: {e.message}")
+            return
+        nid = reply.unpack()[0]
+        self.pending[nid] = file
+        log(f"notified #{nid}: {file}")
+
+    def on_action(self, conn, sender, path, iface, signal, params):
+        nid, key = params.unpack()
+        file = self.pending.get(nid)
+        if file is None:
+            return
+        uri = GLib.filename_to_uri(file, None)
+        try:
+            if key == "open":
+                Gio.AppInfo.launch_default_for_uri(uri, None)
+            else:
+                self.show_in_folder(uri)
+        except GLib.Error as e:
+            log(f"action {key} failed for {file}: {e.message}")
+
+    def show_in_folder(self, uri):
+        try:
+            self.bus.call_sync(
+                FILEMANAGER_NAME, FILEMANAGER_PATH, FILEMANAGER_NAME, "ShowItems",
+                GLib.Variant("(ass)", ([uri], "")), None,
+                Gio.DBusCallFlags.NONE, 5000, None)
+        except GLib.Error as e:
+            # No file manager on the bus: open the directory instead.
+            log(f"ShowItems failed ({e.message}); opening the folder")
+            Gio.AppInfo.launch_default_for_uri(os.path.dirname(uri), None)
+
+    def on_closed(self, conn, sender, path, iface, signal, params):
+        nid, _reason = params.unpack()
+        self.pending.pop(nid, None)
+
+
+def main(argv):
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    notifier = Notifier(bus)
+    if len(argv) >= 2 and argv[1] == "test":
+        if len(argv) != 3:
+            sys.exit(__doc__)
+        notifier.notify(os.path.abspath(argv[2]), "a test")
+        # Stay up long enough for an action click to be handled.
+        GLib.timeout_add_seconds(60, lambda: sys.exit(0))
+    elif len(argv) != 1:
+        sys.exit(__doc__)
+    else:
+        log("listening for KDE Connect shareReceived")
+    GLib.MainLoop().run()
+
+
+if __name__ == "__main__":
+    main(sys.argv)

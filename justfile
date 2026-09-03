@@ -489,9 +489,13 @@ kdeconnect action="install": apply
         # next login; `systemctl --user start` it to get the icon now).
         rm -f "$HOME/.config/autostart/org.kde.kdeconnect.nonplasma.desktop"
         systemctl --user enable topaz-kdeconnect-indicator.service
+        # Received files get no on-screen sign without Plasma's job server
+        # (see the notifier's docstring); this listener fills the gap.
+        systemctl --user enable --now topaz-kdeconnect-share-notify.service
         echo "Daemon enabled (topaz-kdeconnectd.service); pairing state is ~/.config/kdeconnect."
         ;;
     disable)
+        systemctl --user disable --now topaz-kdeconnect-share-notify.service
         systemctl --user disable --now topaz-kdeconnect-indicator.service
         systemctl --user disable --now topaz-kdeconnectd.service
         # Without this, any D-Bus request for the name would restart the
@@ -502,6 +506,8 @@ kdeconnect action="install": apply
         ;;
     status)
         systemctl --user status topaz-kdeconnectd.service --no-pager || true
+        systemctl --user is-active topaz-kdeconnect-share-notify.service \
+            | sed 's/^/share notifications: /'
         "$HOME/.local/bin/kdeconnect-cli" --list-devices 2>/dev/null || true
         "$HOME/.local/bin/topaz-kdeconnect-mount" status
         ;;

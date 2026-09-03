@@ -1,0 +1,19 @@
+[Unit]
+Description=Notify when KDE Connect saves a file shared from the phone
+# KDE Connect reports finished transfers only through Plasma's job
+# server; without Plasma a received file lands in Downloads with no sign
+# on screen. The share plugin still emits shareReceived on the session
+# bus with the saved path, and this listener turns it into a
+# notification with Open / Show in folder actions. It subscribes by bus
+# name, so it needs no ordering against the daemon unit; PartOf= stops
+# it with the session teardown like the rest of the session units.
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/topaz-kdeconnect-share-notify
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target
