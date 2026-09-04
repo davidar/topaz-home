@@ -51,11 +51,13 @@ check "shell watchdog sees the COSMIC shell" \
         systemctl --user is-active topaz-shell-watchdog.service'
 
 # Same live panel, seen through the other watchdog: its layer surfaces
-# must be known to niri (exit 0), and the timer must be schedulable.
+# must be known to niri (exit 0), the timer must be schedulable, and the
+# journal follower must be running.
 check "panel watchdog sees the panel's layer surfaces" \
     tssh 'cd ~/topaz-home && just panel-watchdog enable >/dev/null &&
         TOPAZ_PANEL_WATCHDOG_GRACE=0 systemctl --user start topaz-panel-watchdog.service &&
-        systemctl --user is-active topaz-panel-watchdog.timer'
+        systemctl --user is-active topaz-panel-watchdog.timer &&
+        systemctl --user is-active topaz-panel-watchdog-follow.service'
 
 # No Dropbox Flatpak in the VM: the watchdog must say so and do nothing,
 # and its timer must be schedulable.

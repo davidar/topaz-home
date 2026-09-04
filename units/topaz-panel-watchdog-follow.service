@@ -1,0 +1,15 @@
+[Unit]
+Description=Restart cosmic-panel the moment niri drops its connection
+# Fast path of topaz-panel-watchdog: the timer polls every 20 s, which
+# is how long the desktop has no panel; this tails niri's journal and
+# runs the same check as soon as niri logs the dropped connection.
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/topaz-panel-watchdog --follow
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

@@ -13,9 +13,45 @@
 # where cosmic-session owns it (it respawns on a non-zero exit). Not niri
 # (stock COSMIC): nothing to watch.
 #
+# `--follow` is the fast path: it tails niri's journal and runs the same
+# check the moment niri logs that it dropped the panel's connection, so
+# the panel is back within a second or two instead of at the next timer
+# tick. The timer stays as the backstop for anything the log line misses.
+#
 #   TOPAZ_PANEL_WATCHDOG_DRY_RUN=1   report, never act
 #   TOPAZ_PANEL_WATCHDOG_GRACE=20    seconds a fresh panel gets to map
 set -uo pipefail
+
+if [ "${1:-}" = --follow ]; then
+    self=$(readlink -f "$0")
+    echo "following niri's journal for a dropped cosmic-panel connection"
+    # niri names the client by pid; anything that is not the panel (an
+    # app crashing out of its own connection) is none of our business.
+    journalctl --user -t niri -f -n 0 -o cat 2>/dev/null \
+    | while IFS= read -r line; do
+        case "$line" in
+            *"error in client communication (pid "*) ;;
+            *) continue ;;
+        esac
+        cpid=${line##*"(pid "}
+        cpid=${cpid%%)*}
+        comm=$(cat "/proc/$cpid/comm" 2>/dev/null || echo "gone")
+        if [ "$comm" != cosmic-panel ]; then
+            echo "niri dropped client $cpid ($comm); not the panel"
+            continue
+        fi
+        echo "niri dropped cosmic-panel $cpid's connection; checking"
+        # niri tears the client's surfaces down right after the line, but
+        # give the IPC view a moment to catch up before trusting "healthy".
+        for _ in 1 2 3 4 5; do
+            out=$("$self" 2>&1)
+            echo "$out"
+            case "$out" in *healthy:*) sleep 1 ;; *) break ;; esac
+        done
+    done
+    echo "journal follower ended"
+    exit 1
+fi
 
 dry_run=${TOPAZ_PANEL_WATCHDOG_DRY_RUN:-0}
 grace=${TOPAZ_PANEL_WATCHDOG_GRACE:-20}

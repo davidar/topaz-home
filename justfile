@@ -86,15 +86,16 @@ panel-watchdog action="enable": apply
     set -euo pipefail
     case "{{ action }}" in
     enable)
-        systemctl --user enable --now topaz-panel-watchdog.timer
-        echo "Enabled: checks every 20 s while a graphical session is up."
+        systemctl --user enable --now topaz-panel-watchdog.timer topaz-panel-watchdog-follow.service
+        echo "Enabled: restarts the panel when niri drops it; checks every 20 s as a backstop."
         ;;
     disable)
-        systemctl --user disable --now topaz-panel-watchdog.timer
+        systemctl --user disable --now topaz-panel-watchdog.timer topaz-panel-watchdog-follow.service
         ;;
     status)
         TOPAZ_PANEL_WATCHDOG_DRY_RUN=1 "$HOME/.local/bin/topaz-panel-watchdog"
         systemctl --user list-timers --no-pager topaz-panel-watchdog.timer || true
+        systemctl --user is-active topaz-panel-watchdog-follow.service || true
         ;;
     *)
         echo "usage: just panel-watchdog [enable|disable|status]" >&2
