@@ -1,0 +1,13 @@
+[Unit]
+Description=Log each window niri maps (app-id, title, placement) to the journal
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/topaz-niri-windowlog
+SyslogIdentifier=topaz-niri-windowlog
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

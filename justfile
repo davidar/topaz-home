@@ -103,6 +103,27 @@ panel-watchdog action="enable": apply
         ;;
     esac
 
+# Log each window niri maps (app-id, title, placement) to the journal: enable|disable|show
+niri-windowlog action="enable": apply
+    #!/usr/bin/bash
+    set -euo pipefail
+    case "{{ action }}" in
+    enable)
+        systemctl --user enable --now topaz-niri-windowlog.service
+        echo "Enabled. Read it with: just niri-windowlog show"
+        ;;
+    disable)
+        systemctl --user disable --now topaz-niri-windowlog.service
+        ;;
+    show)
+        journalctl --user -t topaz-niri-windowlog -b --no-pager
+        ;;
+    *)
+        echo "usage: just niri-windowlog [enable|disable|show]" >&2
+        exit 2
+        ;;
+    esac
+
 # Night-shift triage: enable|disable|run|status|report
 nightshift action="status": apply
     #!/usr/bin/bash

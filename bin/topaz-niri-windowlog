@@ -1,0 +1,50 @@
+#!/usr/bin/bash
+# Log every window niri maps, as niri sees it, to the journal.
+#
+# Window rules match on the app-id and title a window has at the moment
+# it opens, and the windows that most need a rule (toasts, splash
+# screens, popouts that are really toplevels) are gone before anyone can
+# run `niri msg windows`. This follows niri's event stream and writes one
+# line when a window opens — the values a rule would have matched, plus
+# what niri did with it — and one when it closes, with its lifetime and
+# the title it ended on if that changed. Windows already open at start
+# are not logged. Read it back with:
+#
+#   journalctl --user -t topaz-niri-windowlog
+#
+set -euo pipefail
+
+command -v niri >/dev/null && [ -n "${NIRI_SOCKET:-}" ] || {
+    echo "not a niri session; nothing to log" >&2
+    exit 0
+}
+
+# shellcheck disable=SC2016  # jq program, not shell
+niri msg -j event-stream | jq --unbuffered -nr '
+    def q: tojson;
+    def describe: "id=\(.id) app-id=\(.app_id | q) title=\(.title | q) pid=\(.pid)"
+        + " size=\(.layout.window_size | map(tostring) | join("x"))"
+        + " floating=\(.is_floating) focused=\(.is_focused) workspace=\(.workspace_id)";
+    foreach inputs as $e ({seen: {}, out: null};
+        .out = null
+        | if $e.WindowsChanged then
+            .seen = ($e.WindowsChanged.windows
+                | map({key: (.id | tostring), value: {opened: now, first: .title, last: .title}})
+                | from_entries)
+        elif $e.WindowOpenedOrChanged then
+            $e.WindowOpenedOrChanged.window as $w
+            | ($w.id | tostring) as $k
+            | if .seen[$k] then .seen[$k].last = $w.title
+              else .seen[$k] = {opened: now, first: $w.title, last: $w.title}
+                  | .out = "open  " + ($w | describe)
+              end
+        elif $e.WindowClosed then
+            ($e.WindowClosed.id | tostring) as $k
+            | .seen[$k] as $s
+            | if $s then
+                .out = "close id=\($k) after=\((now - $s.opened) * 10 | round / 10)s"
+                    + (if $s.last != $s.first then " final-title=\($s.last | q)" else "" end)
+                | del(.seen[$k])
+              else . end
+        else . end;
+        .out // empty)'

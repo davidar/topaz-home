@@ -59,6 +59,11 @@ check "panel watchdog sees the panel's layer surfaces" \
         systemctl --user is-active topaz-panel-watchdog.timer &&
         systemctl --user is-active topaz-panel-watchdog-follow.service'
 
+# The window log must be following niri's event stream.
+check "niri window log is running" \
+    tssh 'cd ~/topaz-home && just niri-windowlog enable >/dev/null &&
+        systemctl --user is-active topaz-niri-windowlog.service'
+
 # No Dropbox Flatpak in the VM: the watchdog must say so and do nothing,
 # and its timer must be schedulable.
 check "dropbox watchdog is inert without the Flatpak" \

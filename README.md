@@ -70,6 +70,8 @@ static checks as CI (`tests/lint.sh`) on every commit.
   surfaces, a protocol-error log line per loop), so nothing else ever
   respawns it. A journal follower acts the moment niri logs the drop; a
   20 s timer backstops it. Verdict comes from `niri msg layers`.
+- **`just niri-windowlog`** — journals the app-id and title each window has
+  when niri maps it, so a window rule can be written for one that is gone.
 - **`just tailscale-tray`** — user unit running `tailscale systray` (ships
   with tailscale; native StatusNotifier).
 - **`just qt-dark`** — Qt Flatpaks on the KDE runtime follow GNOME dark mode
