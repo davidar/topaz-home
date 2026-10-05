@@ -14,10 +14,10 @@
 #
 set -euo pipefail
 
-command -v niri >/dev/null && [ -n "${NIRI_SOCKET:-}" ] || {
+if ! command -v niri >/dev/null || [ -z "${NIRI_SOCKET:-}" ]; then
     echo "not a niri session; nothing to log" >&2
     exit 0
-}
+fi
 
 # shellcheck disable=SC2016  # jq program, not shell
 niri msg -j event-stream | jq --unbuffered -nr '
