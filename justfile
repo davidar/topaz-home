@@ -240,14 +240,18 @@ dropbox: apply
     rm -f "$HOME/.config/systemd/user/topaz-dropbox-restart.path" \
           "$HOME/.config/systemd/user/topaz-dropbox-restart.service"
     systemctl --user daemon-reload
-    systemctl --user enable --now topaz-dropbox.service
+    # reenable: the unit moved from default.target to the graphical
+    # session, and a plain enable would leave the old link in place.
+    systemctl --user reenable topaz-dropbox.service
+    systemctl --user start topaz-dropbox.service
     systemctl --user enable --now topaz-dropbox-watchdog.timer
     echo "Dropbox installed and started. Link the account via the app window."
     echo "If the tray icon shows as a broken image, restart the panel once:"
     echo "  pkill cosmic-panel   # cosmic-session respawns it"
     echo "The watchdog timer relaunches the daemon when it exits and restarts"
     echo "it after Flatpak updates (the stale binary would otherwise keep"
-    echo "running with a dead tray registration). 'dropbox stop' will not"
+    echo "running with a dead tray registration) or when its tray icon is"
+    echo "missing. 'dropbox stop' will not"
     echo "stick while it is enabled: just dropbox-watchdog disable."
 
 # Keep the Dropbox daemon running and current: enable|disable|status

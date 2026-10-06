@@ -55,8 +55,8 @@ static checks as CI (`tests/lint.sh`) on every commit.
   `flatpak kill`); a helper syncs the sandbox-private tray icons into the
   user icon theme, without which COSMIC's panel renders a missing-image
   placeholder; and a watchdog timer (`just dropbox-watchdog`) relaunches
-  the daemon when it quits on its own and bounces it after a Flatpak update
-  — otherwise the old daemon keeps running against replaced files and its
+  the daemon when it quits on its own and bounces it when its tray icon is
+  missing or after a Flatpak update — otherwise the old daemon keeps running against replaced files and its
   tray registration silently dies. A path unit on the deploy symlink cannot
   do this: systemd follows the link, and a deploy never touches the target.
 - **`just shell-watchdog`** — a user unit that fails loudly when

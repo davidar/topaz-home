@@ -1,7 +1,7 @@
 #!/usr/bin/bash
 # Keep the Dropbox Flatpak daemon running, and running the deployed build.
 #
-# Two ways the daemon goes missing, neither of which anything else repairs:
+# Three ways the daemon goes missing, none of which anything else repairs:
 #
 # - It exits on its own. `dropbox start` hands the daemon to the Flatpak
 #   session helper and returns, so the launcher unit is a oneshot with no
@@ -13,10 +13,15 @@
 #   unit on the deploy symlink cannot see the swap: systemd follows the
 #   symlink and watches the deployed directory, which a deploy never
 #   touches (verified with a transient path unit on a mock deploy).
+# - It runs without its tray icon, the only interface it has. A daemon
+#   started while no StatusNotifier host was on the bus (a lingering user
+#   manager starts units long before login) was seen iconless for hours
+#   after the tray appeared: it does not register late.
 #
 # So a timer runs this instead: relaunch when no instance is running,
 # restart when the deployed build differs from the one the launcher
-# recorded. Inert when the Flatpak is not installed.
+# recorded, and restart once when a tray is up and holds no Dropbox item
+# on two consecutive checks. Inert when the Flatpak is not installed.
 #
 #   TOPAZ_DROPBOX_WATCHDOG_DRY_RUN=1   report, never act
 #   TOPAZ_DROPBOX_FLATPAK_ROOTS        install roots to scan (tests)
@@ -27,6 +32,8 @@ dry_run=${TOPAZ_DROPBOX_WATCHDOG_DRY_RUN:-0}
 runtime="${XDG_RUNTIME_DIR:-/tmp}"
 record="$runtime/topaz-dropbox.deployed"
 state="$runtime/topaz-dropbox-watchdog.restarts"
+tray="$runtime/topaz-dropbox-watchdog.tray"
+watcher=org.kde.StatusNotifierWatcher
 launcher=topaz-dropbox.service
 
 deployed() {
@@ -41,6 +48,23 @@ deployed() {
 
 running() {
     flatpak ps --columns=application 2>/dev/null | grep -qx "$app"
+}
+
+# Is the daemon's icon in the tray? 0 yes, 1 no, 2 no tray to ask.
+tray_icon() {
+    local items item svc path id
+    items=$(busctl --user --timeout=5 get-property "$watcher" \
+        /StatusNotifierWatcher "$watcher" RegisteredStatusNotifierItems 2>/dev/null) || return 2
+    # Items are "service/object/path" or a bare service at the default path.
+    for item in $(grep -o '"[^"]*"' <<< "$items" | tr -d '"'); do
+        svc=${item%%/*}
+        path=/StatusNotifierItem
+        [ "$svc" = "$item" ] || path=/${item#*/}
+        id=$(busctl --user --timeout=5 get-property "$svc" "$path" \
+            org.kde.StatusNotifierItem Id 2>/dev/null) || continue
+        case "$id" in *[Dd]ropbox*) return 0 ;; esac
+    done
+    return 1
 }
 
 case "${1:-check}" in
@@ -79,11 +103,32 @@ if running; then
         echo "healthy: daemon running; adopted deploy $current"
         exit 0
     fi
-    if [ "$recorded" = "$current" ]; then
-        echo "healthy: daemon running on the deployed build"
-        exit 0
+    if [ "$recorded" != "$current" ]; then
+        reason="running stale build $(basename "$recorded" | cut -c1-12), deployed is $(basename "$current" | cut -c1-12)"
+    else
+        tray_icon
+        if [ $? != 1 ]; then
+            rm -f "$tray"
+            echo "healthy: daemon running on the deployed build"
+            exit 0
+        fi
+        # Registration trails the launch by a few seconds, so one miss
+        # proves nothing; and a tray this daemon never registers with must
+        # not turn into a restart every tick, so one restart is the limit.
+        case "$(cat "$tray" 2>/dev/null)" in
+        "")
+            [ "$dry_run" = 1 ] || echo seen > "$tray"
+            echo "daemon running without a tray icon; restarting it next check unless the icon registers"
+            exit 0
+            ;;
+        restarted)
+            echo "FAIL: still no tray icon after a restart, not restarting again (rm $tray to re-arm)"
+            exit 1
+            ;;
+        esac
+        reason="daemon running without a tray icon"
+        tray_restart=1
     fi
-    reason="running stale build $(basename "$recorded" | cut -c1-12), deployed is $(basename "$current" | cut -c1-12)"
 else
     reason="no daemon instance running"
 fi
@@ -108,6 +153,7 @@ if [ "$dry_run" = 1 ]; then
     exit 0
 fi
 echo "$now" >> "$state"
+[ "${tray_restart:-0}" = 1 ] && echo restarted > "$tray"
 echo "$reason; restarting $launcher"
 # The daemon lives in a Flatpak app scope, outside the launcher's cgroup,
 # so a unit restart alone would leave it running: kill the instance first

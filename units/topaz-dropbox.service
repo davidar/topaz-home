@@ -1,5 +1,8 @@
 [Unit]
 Description=Dropbox (Flatpak)
+# Started by the graphical session, not the user manager: with lingering
+# the manager starts at boot, minutes before a login brings up a tray, and
+# a daemon launched without one never shows its icon.
 After=graphical-session.target
 
 [Service]
@@ -9,7 +12,7 @@ Type=oneshot
 # Dropbox updates, which change the versioned path).
 ExecStartPre=%h/.local/bin/topaz-dropbox-icons
 # Wait for a StatusNotifier tray to exist so the icon registers, but never
-# block login on it (headless/GNOME-without-appindicator sessions).
+# block on it for long (GNOME-without-appindicator sessions have none).
 ExecStartPre=-/bin/sh -c 'timeout 30 sh -c "until busctl --user status org.kde.StatusNotifierWatcher >/dev/null 2>&1; do sleep 1; done"'
 # `dropbox start` hands the daemon to the Flatpak session helper (it lives in
 # an app scope outside this unit) and exits — hence oneshot. A real restart
@@ -20,4 +23,4 @@ ExecStart=/usr/bin/flatpak run --command=/app/bin/dropbox com.dropbox.Client sta
 ExecStartPost=%h/.local/bin/topaz-dropbox-watchdog record
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target

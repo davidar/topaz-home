@@ -1,11 +1,12 @@
 [Unit]
-Description=Relaunch the Dropbox daemon when it is gone or outdated
+Description=Relaunch the Dropbox daemon when it is gone, outdated or iconless
 # The daemon runs outside its launcher's cgroup and exits on its own
 # (silently, after a release it cannot self-install); a Flatpak update
 # leaves the old daemon running with a dead tray registration, and a path
 # unit on the deploy symlink never sees the swap. The timer runs this
 # check: start when no instance runs, restart when the deployed build
-# differs from the one recorded at launch.
+# differs from the one recorded at launch or the tray holds no Dropbox
+# icon.
 PartOf=graphical-session.target
 
 [Service]
