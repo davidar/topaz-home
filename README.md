@@ -84,6 +84,10 @@ static checks as CI (`tests/lint.sh`) on every commit.
   clipboard transfers. Caveat: Discord stable's bootstrap re-forces its
   ozone platform after argv parsing and stays on XWayland regardless —
   the override is left armed in case a Discord update stops doing that.
+- **`just notify-direct`** — per-app grant to talk to `org.freedesktop.Notifications`
+  plus `NOTIFY_IGNORE_PORTAL=1`, so libnotify bypasses the portal. The GTK portal
+  backend drops the click's xdg-activation token, so a notification click
+  cannot bring the app to the front; direct delivery keeps the token.
 - **`just chrome-integration`** — Chrome Flatpak overrides for automation
   workflows: WebGPU via Vulkan, read-only visibility of Claude Code state.
 - **`just claude-desktop`** — rootless installer/updater for the Debian-only

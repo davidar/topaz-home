@@ -286,6 +286,17 @@ electron-wayland apps="com.discordapp.Discord":
         echo "$app: wayland socket + ELECTRON_OZONE_PLATFORM_HINT=auto (restart the app to apply)"
     done
 
+# Flatpak notifications straight to the daemon, bypassing the portal: the GTK
+# portal backend drops the click's activation token, so the app cannot raise
+# itself from a notification (see topaz-os drafts: portal-gtk notification token)
+notify-direct apps="com.discordapp.Discord":
+    #!/usr/bin/bash
+    set -euo pipefail
+    for app in {{ apps }}; do
+        flatpak override --user --talk-name=org.freedesktop.Notifications --env=NOTIFY_IGNORE_PORTAL=1 "$app"
+        echo "$app: org.freedesktop.Notifications direct + NOTIFY_IGNORE_PORTAL=1 (restart the app to apply)"
+    done
+
 # Chrome overrides for automation: WebGPU via Vulkan, read-only Claude Code state
 chrome-integration:
     #!/usr/bin/bash
