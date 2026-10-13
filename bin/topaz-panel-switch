@@ -7,6 +7,9 @@
 #                                opal-bar at the top of the screen
 #   topaz-panel-switch --undo    cosmic-panel back, the bar at the bottom
 #   topaz-panel-switch --status  what is live now (read-only)
+#   topaz-panel-switch --drop-copy
+#                                remove the tunables copy once the shipped
+#                                default is EDGE_TOP (refuses otherwise)
 #
 # How the panel stays away: cosmic-session respawns a child that exits, by
 # PATH lookup, with ~/.local/bin ahead of /usr/bin on the session's PATH. A
@@ -19,6 +22,17 @@
 # `disable` survives `just apply`, which copies and reloads but never
 # enables. The bar's edge is one word in the user's tunables copy
 # (~/.config/opal/bar_tunables.slang): `opal-reload` recompiles it live.
+#
+# The copy is a bridge, not a config. A user copy is the *whole* module (a
+# partial file does not compile), so from the moment it exists the bar
+# compiles the copy and a default tuned later in the shipped module never
+# reaches it; and a later module that adds a word the caustic needs makes
+# the copy fail to compile, which keeps the last good bar running but puts
+# the next *restart* on the baked SPIR-V, at the bottom. The real fix is
+# EDGE_TOP as the shipped default (opal's queue, after the gate's step 22
+# and its origin probe learn the new default); `--status` says when that
+# has landed and `--drop-copy` then removes the copy — `opal-reload` reads
+# a removal that persists as "back to the shipped module".
 #
 #   OPAL_CAUSTICS=<dir>   the shipped caustics, the source of the tunables
 #                         copy when there is none (default ~/git/opal/caustics)
@@ -66,9 +80,17 @@ session_resolves() { # session_resolves <name>
     PATH=$path command -v "$1"
 }
 
+edge_in() { sed -nE 's/^public static const uint EDGE = (EDGE_[A-Z]+);.*/\1/p' "$1" | head -1; }
 edge() { # the EDGE word in the user's tunables copy, or "none"
-    [ -r "$tunables" ] || { echo none; return; }
-    sed -nE 's/^public static const uint EDGE = (EDGE_[A-Z]+);.*/\1/p' "$tunables" | head -1
+    [ -r "$tunables" ] && edge_in "$tunables" || echo none
+}
+shipped_edge() { # the EDGE word in the shipped module, or "unknown"
+    [ -r "$caustics/bar_tunables.slang" ] && edge_in "$caustics/bar_tunables.slang" || echo unknown
+}
+copy_drift() { # lines where the copy differs from the shipped module, the EDGE line aside
+    [ -r "$tunables" ] && [ -r "$caustics/bar_tunables.slang" ] || { echo "?"; return; }
+    diff <(grep -v '^public static const uint EDGE = ' "$tunables") \
+         <(grep -v '^public static const uint EDGE = ' "$caustics/bar_tunables.slang") | grep -c '^[<>]'
 }
 
 panel_layers() { # cosmic-panel's layer surfaces niri knows, by its entry names
@@ -109,12 +131,12 @@ wait_for() { # wait_for <seconds> <command...>: true when the command succeeds i
 }
 
 status() {
-    local name pids s owner
+    local name pids s owner enabled active
     say "panel:"
     for name in "${shimmed[@]}"; do
         pids=$(procs "$name" real | tr '\n' ' ')
         s=$(procs "$name" shim | tr '\n' ' ')
-        say "  $name: real ${pids:-none}| shim ${s:-none}"
+        say "  $name: real ${pids:-none }| shim ${s:-none}"
     done
     say "  cosmic-panel layer surfaces: $(panel_layers | sed 's/^$/none/')"
     say "  opal-bar layer surface: $(bar_layer)"
@@ -129,11 +151,16 @@ status() {
     done
     say "watchdogs:"
     for name in "${watchdogs[@]}"; do
-        say "  $name: $(systemctl --user is-enabled "$name" 2>/dev/null || echo missing), $(systemctl --user is-active "$name" 2>/dev/null)"
+        enabled=$(systemctl --user is-enabled "$name" 2>/dev/null); active=$(systemctl --user is-active "$name" 2>/dev/null)
+        say "  $name: ${enabled:-missing}, ${active:-missing}"
     done
     say "bar:"
     say "  opal-bar.service: $(systemctl --user is-active opal-bar.service 2>/dev/null)"
-    say "  tunables copy: $tunables — EDGE $(edge)"
+    say "  tunables copy: $tunables — EDGE $(edge); shipped ($caustics): EDGE $(shipped_edge)"
+    if [ -r "$tunables" ]; then
+        say "  the copy differs from the shipped module in $(copy_drift) lines besides EDGE (0 = a pure bridge)"
+        [ "$(shipped_edge)" = EDGE_TOP ] && say "  the shipped default is EDGE_TOP now: the copy is redundant — topaz-panel-switch --drop-copy"
+    fi
     say "  state: $state_dir ($(ls "$state_dir" 2>/dev/null | tr '\n' ' '))"
 }
 
@@ -212,15 +239,19 @@ switch() {
     fi
     say "  org.freedesktop.Notifications: $(notify_owner)"
 
-    say "4. the bar to the top: EDGE = EDGE_TOP in $tunables"
-    if [ ! -e "$tunables" ]; then
-        cp "$caustics/bar_tunables.slang" "$tunables"
-        touch "$state_dir/tunables-created"
-        say "  copied the shipped module from $caustics (a copy shadows the shipped one from now on; edits to the shipped tunables no longer reach this bar)"
+    say "4. the bar to the top"
+    if [ "$(shipped_edge)" = EDGE_TOP ] && [ ! -e "$tunables" ]; then
+        say "  the shipped default is already EDGE_TOP; no copy needed"
+    else
+        if [ ! -e "$tunables" ]; then
+            cp "$caustics/bar_tunables.slang" "$tunables"
+            touch "$state_dir/tunables-created"
+            say "  copied the shipped module from $caustics as a BRIDGE: the bar compiles this copy from now on, so later shipped defaults do not reach it until it is removed (--drop-copy, once the shipped default is EDGE_TOP)"
+        fi
+        sed -i -E 's/^(public static const uint EDGE = )EDGE_(TOP|BOTTOM);/\1EDGE_TOP;/' "$tunables"
+        [ "$(edge)" = EDGE_TOP ] || die "EDGE is '$(edge)' after the edit; the tunables module's EDGE line is not where this script expects it"
+        say "  EDGE_TOP written to $tunables; opal-reload recompiles (a few seconds on the laptop's GPU, the bar re-anchors itself)"
     fi
-    sed -i -E 's/^(public static const uint EDGE = )EDGE_(TOP|BOTTOM);/\1EDGE_TOP;/' "$tunables"
-    [ "$(edge)" = EDGE_TOP ] || die "EDGE is '$(edge)' after the edit; the tunables module's EDGE line is not where this script expects it"
-    say "  EDGE_TOP written; opal-reload recompiles (a few seconds on the laptop's GPU, the bar re-anchors itself)"
 
     say "done. cosmic-panel is disabled, not removed: --undo puts it back. After the next login run: topaz-panel-switch --status"
 }
@@ -229,13 +260,17 @@ undo() {
     local name p
     mkdir -p "$state_dir"
     say "1. the bar back to the bottom"
-    if [ -r "$tunables" ]; then
+    if [ "$(shipped_edge)" = EDGE_BOTTOM ] && [ -e "$state_dir/tunables-created" ]; then
+        rm -f "$tunables" "$state_dir/tunables-created"
+        say "  the bridge copy removed; opal-reload returns the bar to the shipped module (EDGE_BOTTOM) within a second"
+    elif [ -r "$tunables" ]; then
         sed -i -E 's/^(public static const uint EDGE = )EDGE_(TOP|BOTTOM);/\1EDGE_BOTTOM;/' "$tunables"
-        say "  EDGE_BOTTOM written to $tunables"
-        if [ -e "$state_dir/tunables-created" ]; then
-            say "  (the copy was this script's; it stays with EDGE_BOTTOM, identical to the shipped module — delete it by hand once the bar has re-anchored, or leave it)"
-            rm -f "$state_dir/tunables-created"
-        fi
+        say "  EDGE_BOTTOM written to $tunables (a copy that was not this script's, or the shipped default is EDGE_TOP now)"
+    elif [ "$(shipped_edge)" = EDGE_TOP ]; then
+        cp "$caustics/bar_tunables.slang" "$tunables"
+        sed -i -E 's/^(public static const uint EDGE = )EDGE_(TOP|BOTTOM);/\1EDGE_BOTTOM;/' "$tunables"
+        touch "$state_dir/tunables-created"
+        say "  the shipped default is EDGE_TOP, so a copy with EDGE_BOTTOM moves the bar out of cosmic-panel's way: $tunables"
     fi
 
     say "2. the shims out of $bin"
@@ -277,9 +312,19 @@ undo() {
     say "done. cosmic-panel is the panel again; the bar runs beside it at the bottom."
 }
 
+drop_copy() {
+    [ -e "$tunables" ] || { say "no tunables copy at $tunables; nothing to drop"; return 0; }
+    [ "$(shipped_edge)" = EDGE_TOP ] || die "the shipped default is $(shipped_edge), not EDGE_TOP; removing the copy would put the bar at the bottom. Flip the shipped default first (opal: caustics/bar_tunables.slang)."
+    local drift; drift=$(copy_drift)
+    [ "$drift" = 0 ] || die "the copy differs from the shipped module in $drift lines besides EDGE; it carries more than the bridge — compare before removing: diff $tunables $caustics/bar_tunables.slang"
+    rm -f "$tunables" "$state_dir/tunables-created"
+    say "removed $tunables; opal-reload returns the bar to the shipped module (EDGE_TOP) within a second"
+}
+
 case "${1:-}" in
     "") switch ;;
     --undo) undo ;;
     --status) status ;;
-    *) say "usage: topaz-panel-switch [--undo|--status]" >&2; exit 2 ;;
+    --drop-copy) drop_copy ;;
+    *) say "usage: topaz-panel-switch [--undo|--status|--drop-copy]" >&2; exit 2 ;;
 esac

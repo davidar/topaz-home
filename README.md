@@ -78,8 +78,11 @@ static checks as CI (`tests/lint.sh`) on every commit.
   sleeps is what it finds, this login and the next. The three watchdogs
   above are disabled first (not masked — their files are this repo's copies
   in `~/.config/systemd/user`, and `just apply` never re-enables), the bar's
-  edge is flipped to the top in `~/.config/opal/bar_tunables.slang`.
-  `--undo` reverses every step; `--status` is read-only.
+  edge is flipped to the top in `~/.config/opal/bar_tunables.slang` — a
+  *bridge* copy of the whole shipped module, which the bar compiles instead
+  of the shipped one until `--drop-copy` removes it (allowed once opal ships
+  `EDGE_TOP` as the default; `--status` says when). `--undo` reverses every
+  step; `--status` is read-only.
 - **`just niri-windowlog`** — journals the app-id and title each window has
   when niri maps it, so a window rule can be written for one that is gone.
 - **`just tailscale-tray`** — user unit running `tailscale systray` (ships
