@@ -10,6 +10,11 @@ After=graphical-session.target
 PartOf=graphical-session.target
 
 [Service]
+# Qt picks its platform theme from XDG_CURRENT_DESKTOP; only a COSMIC
+# session names one the container has a plugin for (cutecosmic, key
+# "cosmic"). Under the niri (topaz) session nothing matches and Qt falls
+# back to its light generic theme, so name the plugin explicitly.
+Environment=QT_QPA_PLATFORMTHEME=cosmic
 # Type=dbus + BusName: the unit counts as up once the daemon owns the
 # name, and D-Bus activation (SystemdService= in the activation file)
 # starts this unit instead of racing a second daemon against it.

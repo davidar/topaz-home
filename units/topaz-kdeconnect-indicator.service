@@ -12,6 +12,11 @@ Wants=topaz-kdeconnectd.service
 PartOf=graphical-session.target
 
 [Service]
+# Qt picks its platform theme from XDG_CURRENT_DESKTOP; only a COSMIC
+# session names one the container has a plugin for (cutecosmic, key
+# "cosmic"). Under the niri (topaz) session nothing matches and Qt falls
+# back to its light generic theme, so name the plugin explicitly.
+Environment=QT_QPA_PLATFORMTHEME=cosmic
 ExecStart=/usr/bin/distrobox-enter -n kdeconnect -- kdeconnect-indicator
 Restart=on-failure
 RestartSec=5
