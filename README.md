@@ -91,6 +91,10 @@ static checks as CI (`tests/lint.sh`) on every commit.
 - **`just qt-dark`** — Qt Flatpaks on the KDE runtime follow GNOME dark mode
   via Kvantum, with a `--nofilesystem=xdg-config/kdeglobals` negation so
   KDE-runtime apps cannot read a host kdeglobals that fights the theme.
+- **`just kde-colors`** — seeds `~/.config/kdeglobals` with the COSMIC Dark
+  palette so KDE apps (the kdeconnect indicator) stay dark in sessions without
+  cosmic-settings-daemon, which writes that file in a COSMIC session and blanks
+  it at logout. The kdeconnect units name the cutecosmic platform theme.
 - **`just electron-wayland`** — per-app Wayland socket grant plus
   `ELECTRON_OZONE_PLATFORM_HINT=auto` (the hint alone is inert when the
   app manifest only grants x11). Electron apps default to XWayland;

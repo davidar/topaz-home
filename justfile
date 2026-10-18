@@ -190,6 +190,10 @@ qt-dark:
     echo "Done. Restart Qt Flatpak apps to pick up the dark theme."
     echo "Background: README.md (Qt dark theme) in the topaz-home repo."
 
+# KDE apps (kdeconnect) keep COSMIC's dark palette outside a COSMIC session
+kde-colors *args: apply
+    "$HOME/.local/bin/topaz-kde-colors" {{ args }}
+
 # Tailscale tray icon in the panel (StatusNotifier; ships with tailscale)
 tailscale-tray: apply
     systemctl --user enable --now tailscale-systray.service

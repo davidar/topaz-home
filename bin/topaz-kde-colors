@@ -1,0 +1,35 @@
+#!/bin/bash
+# Seed ~/.config/kdeglobals with COSMIC's dark colour scheme.
+#
+# KDE applications (and Breeze, the widget style cutecosmic picks for
+# them) take their palette from the [Colors:*] groups in kdeglobals.
+# cosmic-settings-daemon's toolkit theming writes the COSMIC palette into
+# those groups while a COSMIC session runs and blanks them at logout; a
+# session without the daemon (niri (topaz)) then leaves KDE apps on
+# Breeze's built-in light defaults. This restores the daemon's own
+# output: the live scheme it last generated when present, else the copy
+# kept in the topaz-home share tree.
+#
+#   topaz-kde-colors          write only when kdeglobals carries no colours
+#   topaz-kde-colors --force  rewrite unconditionally
+set -euo pipefail
+
+CONF="$HOME/.config/kdeglobals"
+SCHEME="$HOME/.local/share/color-schemes/CosmicDark.colors"
+FALLBACK="$HOME/.local/share/topaz-home/kde/CosmicDark.colors"
+
+if [ "${1:-}" != --force ] && grep -qs '^BackgroundNormal=' "$CONF"; then
+    echo "kdeglobals already carries a colour scheme; leaving it"
+    exit 0
+fi
+src=$SCHEME
+[ -s "$src" ] || src=$FALLBACK
+[ -s "$src" ] || { echo "no colour scheme at $SCHEME or $FALLBACK"; exit 1; }
+
+mkdir -p "$(dirname "$CONF")"
+# The scheme file is kdeglobals-shaped already (Colors:*, General, Icons,
+# KDE, WM); drop the generator comment and leading blank lines.
+grep -v '^# GENERATED' "$src" | sed '/./,$!d' > "$CONF.tmp"
+mv -f "$CONF.tmp" "$CONF"
+echo "kdeglobals seeded from $src"
+echo "Running KDE apps pick it up on restart (kdeconnect: systemctl --user restart topaz-kdeconnectd.service topaz-kdeconnect-indicator.service)."
