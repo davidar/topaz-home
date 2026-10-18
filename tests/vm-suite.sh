@@ -81,9 +81,11 @@ check "every unit file loads" \
         [ "$state" = loaded ] || echo "$u: $state"
     done'
 
-check "wallpaper sync writes cosmic config" \
+check "wallpaper sync writes cosmic config and the swaybg drop-in" \
     tssh 'systemctl --user start topaz-bluefin-wallpaper.service &&
-        test -s ~/.config/cosmic/com.system76.CosmicBackground/v1/all'
+        test -s ~/.config/cosmic/com.system76.CosmicBackground/v1/all &&
+        grep -q "/usr/share/backgrounds/bluefin/" \
+            ~/.config/systemd/user/topaz-background.service.d/wallpaper.conf'
 # Live, cosmic-bg repaints on its 5-minute rotation tick; the suite
 # can't wait that out, so respawn it for a deterministic screendump.
 tssh 'pkill -x cosmic-bg || true'

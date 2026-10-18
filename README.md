@@ -42,12 +42,13 @@ static checks as CI (`tests/lint.sh`) on every commit.
   signatures, expected transitional failures, watch items). Unconfigured, it
   saves raw digests. `just nightshift report` reads the latest (they live in
   `~/.local/state/topaz/reports/`).
-- **`just wallpaper`** — keeps COSMIC's wallpaper on Bluefin's monthly
-  artwork, flipping day/night variants at the midpoints of the GNOME
-  timed-XML transitions (04:40 / 17:50) and rolling the month at 00:05.
-  COSMIC has no timed-wallpaper support of its own; the script points
-  cosmic-config at the image's own jxl files, so new art arrives with image
-  updates. Skips gracefully on non-Bluefin hosts.
+- **`just wallpaper`** — keeps the wallpaper on Bluefin's monthly artwork,
+  flipping day/night variants at the midpoints of the GNOME timed-XML
+  transitions (04:40 / 17:50) and rolling the month at 00:05. Neither
+  cosmic-bg nor swaybg has timed-wallpaper support; the script points
+  cosmic-config at the image's own jxl files (COSMIC sessions) and writes a
+  drop-in for the image's swaybg unit, restarting it (niri (topaz) session),
+  so new art arrives with image updates. Skips gracefully on non-Bluefin hosts.
 - **`just dropbox`** — Dropbox Flatpak with a working tray icon under
   COSMIC. Three hard-won fixes are encoded: the launcher unit is `oneshot`
   because `dropbox start` hands the daemon to the Flatpak session helper and

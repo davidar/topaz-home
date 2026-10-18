@@ -223,7 +223,7 @@ panel:
         echo "Panel layout already current."
     fi
 
-# COSMIC wallpaper follows Bluefin's monthly artwork with day/night flips
+# Wallpaper follows Bluefin's monthly artwork with day/night flips (cosmic-bg + swaybg)
 wallpaper: apply
     systemctl --user enable --now topaz-bluefin-wallpaper.timer
     systemctl --user start topaz-bluefin-wallpaper.service

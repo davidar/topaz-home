@@ -1,5 +1,5 @@
 [Unit]
-Description=COSMIC wallpaper sync to Bluefin's monthly artwork (day/night flips)
+Description=Wallpaper sync to Bluefin's monthly artwork (day/night flips)
 
 [Timer]
 OnCalendar=*-*-* 00:05
