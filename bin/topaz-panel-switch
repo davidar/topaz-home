@@ -88,7 +88,7 @@ shipped_edge() { # the EDGE word in the shipped module, or "unknown"
     [ -r "$caustics/bar_tunables.slang" ] && edge_in "$caustics/bar_tunables.slang" || echo unknown
 }
 copy_drift() { # lines where the copy differs from the shipped module, the EDGE line aside
-    [ -r "$tunables" ] && [ -r "$caustics/bar_tunables.slang" ] || { echo "?"; return; }
+    if ! [ -r "$tunables" ] || ! [ -r "$caustics/bar_tunables.slang" ]; then echo "?"; return; fi
     diff <(grep -v '^public static const uint EDGE = ' "$tunables") \
          <(grep -v '^public static const uint EDGE = ' "$caustics/bar_tunables.slang") | grep -c '^[<>]'
 }
