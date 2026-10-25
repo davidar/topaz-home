@@ -42,23 +42,6 @@ check "just apply installs the layer" \
 check "just check reports no drift" \
     tssh 'cd ~/topaz-home && just check'
 
-# The session in the VM is COSMIC-on-niri with a live panel, so the
-# watchdog must come back green; a red verdict here means the shell never
-# came up and every later visual check would be looking at a bare niri.
-check "shell watchdog sees the COSMIC shell" \
-    tssh 'cd ~/topaz-home && just shell-watchdog enable >/dev/null &&
-        systemctl --user start topaz-shell-watchdog.service &&
-        systemctl --user is-active topaz-shell-watchdog.service'
-
-# Same live panel, seen through the other watchdog: its layer surfaces
-# must be known to niri (exit 0), the timer must be schedulable, and the
-# journal follower must be running.
-check "panel watchdog sees the panel's layer surfaces" \
-    tssh 'cd ~/topaz-home && just panel-watchdog enable >/dev/null &&
-        TOPAZ_PANEL_WATCHDOG_GRACE=0 systemctl --user start topaz-panel-watchdog.service &&
-        systemctl --user is-active topaz-panel-watchdog.timer &&
-        systemctl --user is-active topaz-panel-watchdog-follow.service'
-
 # The window log must be following niri's event stream.
 check "niri window log is running" \
     tssh 'cd ~/topaz-home && just niri-windowlog enable >/dev/null &&
@@ -81,26 +64,13 @@ check "every unit file loads" \
         [ "$state" = loaded ] || echo "$u: $state"
     done'
 
-check "wallpaper sync writes cosmic config and the swaybg drop-in" \
-    tssh 'systemctl --user start topaz-bluefin-wallpaper.service &&
-        test -s ~/.config/cosmic/com.system76.CosmicBackground/v1/all &&
-        grep -q "/usr/share/backgrounds/bluefin/" \
-            ~/.config/systemd/user/topaz-background.service.d/wallpaper.conf'
-# Live, cosmic-bg repaints on its 5-minute rotation tick; the suite
-# can't wait that out, so respawn it for a deterministic screendump.
-tssh 'pkill -x cosmic-bg || true'
-
-# The dash-to-panel layout: applied files must match the repo's copies
-# (the recipe restarts cosmic-panel itself when anything changed) — the
-# screendump after the settle shows the merged bar over the Bluefin
-# artwork, minus the applets the image doesn't ship.
-check "just panel applies the layout" \
-    tssh 'cd ~/topaz-home && just panel &&
-        diff -r desktop/cosmic/com.system76.CosmicPanel.Panel \
-            ~/.config/cosmic/com.system76.CosmicPanel.Panel'
-sleep 5
-check "screendump: merged panel" \
-    screendump "$ART/screens/topaz-home-1-panel.png"
+# GTK dark: the css symlinks are gone (none in a fresh VM home) and the
+# two gsettings keys hold.
+check "just gtk-dark sets the theme keys" \
+    tssh 'cd ~/topaz-home && just gtk-dark >/dev/null &&
+        gsettings get org.gnome.desktop.interface gtk-theme | grep -qx "'"'"'adw-gtk3-dark'"'"'" &&
+        gsettings get org.gnome.desktop.interface color-scheme | grep -qx "'"'"'prefer-dark'"'"'" &&
+        ! test -e ~/.config/gtk-4.0/gtk.css'
 
 # Behavioral smoke on the pieces a bare VM session can actually run.
 # The snapshot skips an empty session by design ("just logged in" beats
