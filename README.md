@@ -42,13 +42,6 @@ static checks as CI (`tests/lint.sh`) on every commit.
   signatures, expected transitional failures, watch items). Unconfigured, it
   saves raw digests. `just nightshift report` reads the latest (they live in
   `~/.local/state/topaz/reports/`).
-- **`just wallpaper`** — keeps the wallpaper on Bluefin's monthly artwork,
-  flipping day/night variants at the midpoints of the GNOME timed-XML
-  transitions (04:40 / 17:50) and rolling the month at 00:05. Neither
-  cosmic-bg nor swaybg has timed-wallpaper support; the script points
-  cosmic-config at the image's own jxl files (COSMIC sessions) and writes a
-  drop-in for the image's swaybg unit, restarting it (niri (topaz) session),
-  so new art arrives with image updates. Skips gracefully on non-Bluefin hosts.
 - **`just dropbox`** — Dropbox Flatpak with a working tray icon under
   COSMIC. Three hard-won fixes are encoded: the launcher unit is `oneshot`
   because `dropbox start` hands the daemon to the Flatpak session helper and
@@ -60,30 +53,6 @@ static checks as CI (`tests/lint.sh`) on every commit.
   missing or after a Flatpak update — otherwise the old daemon keeps running against replaced files and its
   tray registration silently dies. A path unit on the deploy symlink cannot
   do this: systemd follows the link, and a deploy never touches the target.
-- **`just shell-watchdog`** — a user unit that fails loudly when
-  cosmic-session is running but no panel appeared after login. cosmic-session
-  waits silently forever for the compositor's environment handshake, and
-  niri 26.04 does not log a startup spawn whose binary is missing — so a
-  stale path in `~/.config/niri` costs a whole login with no clue. `just
-  check` also lints every `spawn-at-startup` target for the same reason.
-- **`just panel-watchdog`** — restarts cosmic-panel when the compositor
-  has dropped its connection: the panel does not exit in that state (no
-  surfaces, a protocol-error log line per loop), so nothing else ever
-  respawns it. A journal follower acts the moment niri logs the drop; a
-  20 s timer backstops it. Verdict comes from `niri msg layers`.
-- **`topaz-panel-switch`** — makes opal's bar the panel, cosmic-panel
-  disabled but not removed (the interim before topaz-os's
-  `niri-topaz-session` branch does it in the image). cosmic-session respawns
-  a child that exits, by PATH lookup, with `~/.local/bin` ahead of
-  `/usr/bin`: a `cosmic-panel` (and `cosmic-notifications`) there that only
-  sleeps is what it finds, this login and the next. The three watchdogs
-  above are disabled first (not masked — their files are this repo's copies
-  in `~/.config/systemd/user`, and `just apply` never re-enables), the bar's
-  edge is flipped to the top in `~/.config/opal/bar_tunables.slang` — a
-  *bridge* copy of the whole shipped module, which the bar compiles instead
-  of the shipped one until `--drop-copy` removes it (allowed once opal ships
-  `EDGE_TOP` as the default; `--status` says when). `--undo` reverses every
-  step; `--status` is read-only.
 - **`just niri-windowlog`** — journals the app-id and title each window has
   when niri maps it, so a window rule can be written for one that is gone.
 - **`just tailscale-tray`** — user unit running `tailscale systray` (ships
@@ -95,6 +64,11 @@ static checks as CI (`tests/lint.sh`) on every commit.
   palette so KDE apps (the kdeconnect indicator) stay dark in sessions without
   cosmic-settings-daemon, which writes that file in a COSMIC session and blanks
   it at logout. The kdeconnect units name the cutecosmic platform theme.
+- **`just gtk-dark`** — GTK apps dark without a COSMIC shell: `adw-gtk3-dark`
+  for GTK3 and `color-scheme prefer-dark` for libadwaita, which the image's
+  Settings portal now serves from gsettings (topaz-os ledger 0039). Removes
+  the `gtk.css` symlinks cosmic-settings-daemon wrote in COSMIC days, static
+  files nothing updates any more.
 - **`just electron-wayland`** — per-app Wayland socket grant plus
   `ELECTRON_OZONE_PLATFORM_HINT=auto` (the hint alone is inert when the
   app manifest only grants x11). Electron apps default to XWayland;
@@ -113,11 +87,6 @@ static checks as CI (`tests/lint.sh`) on every commit.
   beyond the chrome-sandbox setuid fixup it prompts for).
 - **`just kitty`** — kitty via the official user-scoped installer, with
   desktop-file integration fixes.
-- **`just applets`** — builds a pinned set of COSMIC panel applets (minimon —
-  a fork carrying an NVML no-wake fix and combined GPU charts pending
-  upstreaming — plus caffeine and observatory) from source in a disposable
-  container on the image's Fedora release, installing into `~/.local`.
-  Commit pins live in the recipe and move only by deliberate edit.
 - **`just touchpad-dwt`** — opt out of libinput's disable-while-typing
   (keyboard-plus-touchpad play, e.g. FPS controls); `enabled=true` restores
   the default.

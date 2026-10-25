@@ -58,51 +58,6 @@ check:
 # A daily timer digests system events into a morning report via your
 # configured TRIAGE_CMD (see share/nightshift.conf.example).
 
-# Fail a user unit loudly if the COSMIC shell is missing after login: enable|disable|status
-shell-watchdog action="enable": apply
-    #!/usr/bin/bash
-    set -euo pipefail
-    case "{{ action }}" in
-    enable)
-        systemctl --user enable topaz-shell-watchdog.service
-        echo "Enabled: runs after graphical-session.target at each login."
-        echo "Check this session now: systemctl --user start topaz-shell-watchdog.service"
-        ;;
-    disable)
-        systemctl --user disable --now topaz-shell-watchdog.service
-        ;;
-    status)
-        systemctl --user status --no-pager topaz-shell-watchdog.service || true
-        ;;
-    *)
-        echo "usage: just shell-watchdog [enable|disable|status]" >&2
-        exit 2
-        ;;
-    esac
-
-# Panel watchdog: restart a cosmic-panel that lost its compositor connection
-panel-watchdog action="enable": apply
-    #!/usr/bin/bash
-    set -euo pipefail
-    case "{{ action }}" in
-    enable)
-        systemctl --user enable --now topaz-panel-watchdog.timer topaz-panel-watchdog-follow.service
-        echo "Enabled: restarts the panel when niri drops it; checks every 20 s as a backstop."
-        ;;
-    disable)
-        systemctl --user disable --now topaz-panel-watchdog.timer topaz-panel-watchdog-follow.service
-        ;;
-    status)
-        TOPAZ_PANEL_WATCHDOG_DRY_RUN=1 "$HOME/.local/bin/topaz-panel-watchdog"
-        systemctl --user list-timers --no-pager topaz-panel-watchdog.timer || true
-        systemctl --user is-active topaz-panel-watchdog-follow.service || true
-        ;;
-    *)
-        echo "usage: just panel-watchdog [enable|disable|status]" >&2
-        exit 2
-        ;;
-    esac
-
 # Log each window niri maps (app-id, title, placement) to the journal: enable|disable|show
 niri-windowlog action="enable": apply
     #!/usr/bin/bash
@@ -194,44 +149,30 @@ qt-dark:
 kde-colors *args: apply
     "$HOME/.local/bin/topaz-kde-colors" {{ args }}
 
+# adw-gtk3 for GTK3, libadwaita's own dark via the color-scheme the Settings
+# portal now serves from gsettings (topaz-os ledger 0039). Removes the css
+# symlinks cosmic-settings-daemon wrote into ~/.config/gtk-{3,4}.0 in COSMIC
+# days: static files nothing updates any more, and they override the theme.
+
+# GTK apps dark without a COSMIC shell (gsettings + adw-gtk3-dark)
+gtk-dark:
+    #!/usr/bin/bash
+    set -euo pipefail
+    for v in 3.0 4.0; do
+        css="$HOME/.config/gtk-$v/gtk.css"
+        if [ -L "$css" ] && [[ "$(readlink "$css")" == */gtk-4.0/cosmic/* ]]; then
+            rm "$css"
+            echo "removed $css (pointed at the COSMIC-generated css)"
+        fi
+    done
+    gsettings set org.gnome.desktop.interface color-scheme prefer-dark
+    gsettings set org.gnome.desktop.interface gtk-theme adw-gtk3-dark
+    echo "Done. Running GTK apps re-theme live; Flatpaks follow the Settings portal."
+
 # Tailscale tray icon in the panel (StatusNotifier; ships with tailscale)
 tailscale-tray: apply
     systemctl --user enable --now tailscale-systray.service
     @echo "Tailscale tray enabled (unit: tailscale-systray.service)."
-
-# Copies the desktop/cosmic/ config namespaces. The layout: app list +
-# minimize buttons in the left wing, clock + minimon center, tray right;
-# the separate dock entry is dropped. Applets not installed on the host
-# (caffeine, minimon) simply don't render their segment. cosmic-panel
-# hot-reloads single keys but a wholesale swap leaves stale surfaces
-# behind (a second bar), so restart it when anything changed —
-# cosmic-session respawns it.
-
-# Dash-to-panel layout: one merged bar instead of panel + dock
-panel:
-    #!/usr/bin/bash
-    set -euo pipefail
-    changed=0
-    for ns in "$PWD"/desktop/cosmic/*; do
-        dest="$HOME/.config/cosmic/$(basename "$ns")"
-        mkdir -p "$dest"
-        while IFS= read -r f; do
-            cmp -s "$f" "$dest/${f#"$ns"/}" || changed=1
-        done < <(find "$ns" -type f)
-        cp -rf "$ns"/. "$dest"/
-    done
-    if [ "$changed" = 1 ]; then
-        pkill -x cosmic-panel || true
-        echo "Panel layout applied (panel restarted; cosmic-session respawns it)."
-    else
-        echo "Panel layout already current."
-    fi
-
-# Wallpaper follows Bluefin's monthly artwork with day/night flips (cosmic-bg + swaybg)
-wallpaper: apply
-    systemctl --user enable --now topaz-bluefin-wallpaper.timer
-    systemctl --user start topaz-bluefin-wallpaper.service
-    @echo "Wallpaper synced; flips at 04:40/17:50, month rollover at 00:05."
 
 # Dropbox via Flatpak with a working tray icon under COSMIC
 dropbox: apply
@@ -330,65 +271,6 @@ kitty:
     sed -i "s|Icon=kitty|Icon=$HOME/.local/kitty.app/share/icons/hicolor/256x256/apps/kitty.png|g; s|Exec=kitty|Exec=$HOME/.local/kitty.app/bin/kitty|g" \
         "$HOME"/.local/share/applications/kitty*.desktop
     echo "kitty installed to ~/.local/kitty.app (re-run to update)."
-
-# Build the pinned COSMIC applets from source and install them to ~/.local
-applets applet="all":
-    #!/usr/bin/bash
-    set -euo pipefail
-    # Pinned commits, same discipline as the topaz-os compositor fork's REF
-    # (its ledger 0015): updates arrive as deliberate bumps here, and a
-    # re-run rebuilds. minimon is a fork (NVML no-wake fix + combined GPU
-    # charts) until those changes land upstream.
-    declare -A repo ref bin
-    repo[minimon]="https://github.com/davidar/minimon-applet"
-    ref[minimon]="155971bf22f13ebddf626ce14d1b970b20e63ed5"
-    bin[minimon]="cosmic-ext-applet-minimon"
-    repo[caffeine]="https://github.com/tropicbliss/cosmic-ext-applet-caffeine"
-    ref[caffeine]="e427a1a903fd612a09477d0e90bd4aed4a494a08"
-    bin[caffeine]="cosmic-ext-applet-caffeine"
-    repo[observatory]="https://github.com/cosmic-utils/observatory"
-    ref[observatory]="f62326dc4a00074e8c72f307ca9df4858f2b3ad9"
-    bin[observatory]="observatory"
-    sel="{{ applet }}"
-    [ "$sel" = all ] && sel="minimon caffeine observatory"
-    for a in $sel; do
-        if [ -z "${repo[$a]:-}" ]; then
-            echo "unknown applet: $a (minimon|caffeine|observatory|all)" >&2
-            exit 1
-        fi
-        src="$HOME/.cache/topaz-applets/$a"
-        [ -d "$src/.git" ] || git init -q "$src"
-        git -C "$src" fetch -q --depth=1 "${repo[$a]}" "${ref[$a]}"
-        git -C "$src" checkout -q FETCH_HEAD
-        # Build in a disposable container on the image's Fedora release:
-        # the binary links the container's glibc, which must not be newer
-        # than the image's (the compositor-builder rule, topaz-os ledger
-        # 0015) — bump the release together with the base image. target/
-        # lives in the mounted checkout and the cargo registry in a named
-        # volume, so only the first build is cold (libcosmic is heavy —
-        # expect ~15 minutes per applet; later runs are incremental).
-        podman run --rm -v "$src":/src:Z -w /src \
-            -v topaz-applets-cargo:/root/.cargo \
-            registry.fedoraproject.org/fedora:44 \
-            bash -c 'dnf -y -q install gcc cargo rust just git-core \
-                pkgconf-pkg-config libxkbcommon-devel wayland-devel \
-                fontconfig-devel mesa-libgbm-devel libglvnd-devel \
-                expat-devel && just build-release'
-        # Each repo's own install target does the placement (they all
-        # honor rootdir/prefix). Note: caffeine's upstream install target
-        # resets the applet's own config directory.
-        (cd "$src" && just rootdir='' prefix="$HOME/.local" install)
-        # The panel's PATH may not include ~/.local/bin: applet desktop
-        # files need absolute Exec paths (same fix as the kitty verb).
-        desk=$(grep -rlE "^Exec=${bin[$a]}( |$)" \
-            "$HOME/.local/share/applications" | head -1)
-        if [ -n "$desk" ]; then
-            sed -i "s|^Exec=${bin[$a]}|Exec=$HOME/.local/bin/${bin[$a]}|" "$desk"
-        fi
-        echo "$a installed at ${ref[$a]:0:7}"
-    done
-    echo "Restart the panel to load new applet binaries: pkill cosmic-panel"
-    echo "(cosmic-session respawns it)"
 
 # Keep the touchpad active while typing (libinput disables it by default)
 touchpad-dwt enabled="false":
