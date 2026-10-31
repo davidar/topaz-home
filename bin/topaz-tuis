@@ -5,8 +5,10 @@
 #   topaz-tuis            install or update everything below
 #   topaz-tuis --check    report what is installed, exit 1 if anything is missing
 #
-# Rust tools come from crates.io through cargo (rustup's cargo, or
-# Homebrew's); the rest are Homebrew bottles. Versions are pinned here so
+# Rust tools come from crates.io, built by cargo inside a Fedora container
+# (bluetui links libdbus, whose headers an image host does not carry; the
+# built binaries need only the libraries every Fedora has) and copied into
+# ~/.local/bin; the rest are Homebrew bottles. Versions are pinned here so
 # a run on another day gives the same tools; bump them deliberately.
 set -euo pipefail
 
@@ -49,8 +51,8 @@ if [ "${1:-}" = --check ]; then
     exit $?
 fi
 
-command -v cargo > /dev/null || {
-    echo "topaz-tuis: cargo not found (rustup: https://rustup.rs, or brew install rust)" >&2
+command -v podman > /dev/null || {
+    echo "topaz-tuis: podman not found" >&2
     exit 1
 }
 command -v brew > /dev/null || {
@@ -58,11 +60,32 @@ command -v brew > /dev/null || {
     exit 1
 }
 
+# One container run builds every Rust tool whose pinned version is not yet
+# installed. The cargo registry and build cache live in a named volume so
+# a second run only compiles what changed.
+pending=()
 for spec in "${cargo_tools[@]}"; do
     read -r name version _ <<< "$spec"
-    # cargo install is a no-op when the exact version is already installed.
-    cargo install --locked --version "$version" "$name"
+    if [ "$("$name" --version 2>/dev/null | awk '{print $NF}')" = "$version" ]; then
+        echo "$name $version already installed"
+    else
+        pending+=("$name $version")
+    fi
 done
+if [ ${#pending[@]} -gt 0 ]; then
+    out=$(mktemp -d)
+    podman run --rm -v "$out:/out:Z" -v topaz-tuis-cargo:/root/.cargo:Z \
+        registry.fedoraproject.org/fedora:44 \
+        bash -euo pipefail -c '
+            dnf -q -y install cargo rust gcc pkgconf-pkg-config dbus-devel > /dev/null
+            for spec in "$@"; do
+                read -r name version <<< "$spec"
+                cargo install --locked --version "$version" --root /out "$name"
+            done' _ "${pending[@]}"
+    mkdir -p "$HOME/.local/bin"
+    install -m 755 "$out"/bin/* "$HOME/.local/bin/"
+    rm -rf "$out"
+fi
 for spec in "${brew_tools[@]}"; do
     name=${spec%% *}
     if brew list --formula "$name" > /dev/null 2>&1; then
@@ -74,4 +97,4 @@ done
 
 echo
 check || true
-echo "Done. topaz-settings lists them; ~/.cargo/bin must be on PATH for the cargo ones."
+echo "Done. topaz-settings lists them (the Rust tools are in ~/.local/bin)."

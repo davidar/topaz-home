@@ -59,8 +59,9 @@ static checks as CI (`tests/lint.sh`) on every commit.
   niri session (they work over ssh too). topaz-os ships the Fedora-packaged
   set (nmtui, wiremix, kanshi, wlr-randr, wlsunset, grim, slurp, wf-recorder,
   btop, ncdu, gdu, bashmount; ledger 0051); this installs the unpackaged
-  ones per user: bluetui, wlctl and systemd-manager-tui from crates.io,
-  lazyjournal and btdu from Homebrew, versions pinned. `topaz-settings` is the
+  ones per user: bluetui, wlctl and systemd-manager-tui from crates.io (built
+  in a Fedora container, since bluetui needs the libdbus headers an image host
+  lacks), lazyjournal and btdu from Homebrew, versions pinned. `topaz-settings` is the
   menu over all of them, so no name needs remembering: fzf in a terminal,
   fuzzel plus `$TERMINAL` from a key bind; `topaz-settings --list` shows the
   table with what is installed.
