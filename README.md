@@ -55,6 +55,15 @@ static checks as CI (`tests/lint.sh`) on every commit.
   do this: systemd follows the link, and a deploy never touches the target.
 - **`just niri-windowlog`** — journals the app-id and title each window has
   when niri maps it, so a window rule can be written for one that is gone.
+- **`just tuis`** — the terminal tools that stand in for a settings app on the
+  niri session (they work over ssh too). topaz-os ships the Fedora-packaged
+  set (nmtui, wiremix, kanshi, wlr-randr, wlsunset, grim, slurp, wf-recorder,
+  btop, ncdu, gdu, bashmount; ledger 0051); this installs the unpackaged
+  ones per user: bluetui, wlctl and systemd-manager-tui from crates.io,
+  lazyjournal and btdu from Homebrew, versions pinned. `topaz-settings` is the
+  menu over all of them, so no name needs remembering: fzf in a terminal,
+  fuzzel plus `$TERMINAL` from a key bind; `topaz-settings --list` shows the
+  table with what is installed.
 - **`just tailscale-tray`** — user unit running `tailscale systray` (ships
   with tailscale; native StatusNotifier).
 - **`just qt-dark`** — Qt Flatpaks on the KDE runtime follow GNOME dark mode

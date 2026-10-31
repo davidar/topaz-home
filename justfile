@@ -169,6 +169,22 @@ gtk-dark:
     gsettings set org.gnome.desktop.interface gtk-theme adw-gtk3-dark
     echo "Done. Running GTK apps re-theme live; Flatpaks follow the Settings portal."
 
+# The settings the shell does not cover are done in terminal tools, which
+# also work over ssh. topaz-os ships the Fedora-packaged ones (ledger 0051);
+# this installs the unpackaged ones per user (cargo for the Rust tools,
+# Homebrew bottles for the rest, versions pinned in bin/topaz-tuis) and
+# bin/topaz-settings is the menu over all of them.
+
+# Terminal settings tools Fedora does not package (`just tuis check` to report)
+tuis action="install": apply
+    #!/usr/bin/bash
+    set -euo pipefail
+    case "{{ action }}" in
+    install) "$HOME/.local/bin/topaz-tuis" ;;
+    check) "$HOME/.local/bin/topaz-tuis" --check ;;
+    *) echo "usage: just tuis [install|check]" >&2; exit 2 ;;
+    esac
+
 # Tailscale tray icon in the panel (StatusNotifier; ships with tailscale)
 tailscale-tray: apply
     systemctl --user enable --now tailscale-systray.service

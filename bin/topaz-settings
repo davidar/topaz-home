@@ -1,0 +1,140 @@
+#!/usr/bin/bash
+# A menu over the terminal tools that stand in for a settings application
+# on the niri (topaz) session: pick what you want done, the right tool
+# runs. The point is not having to remember the tools' names.
+#
+# In a terminal the menu is fzf. Without one (a key bind, the bar) the
+# menu is fuzzel's dmenu mode and the choice runs in $TERMINAL (kitty, then
+# foot, if unset). Entries whose tool is not installed are left out, so the
+# menu is always runnable; `topaz-settings --list` prints the full table
+# with each tool's status instead.
+#
+# The tools: topaz-os ships the Fedora-packaged ones (ledger 0051);
+# `just tuis` in this repo installs the rest per user.
+set -euo pipefail
+
+# label<TAB>command. The first word of each command is the tool whose
+# presence decides whether the entry is offered. The order is the menu.
+entries=$(cat <<'EOF'
+Wi-Fi, connections, VPN: the full editor	nmtui
+Wi-Fi: scan and join	wlctl
+Bluetooth: pair and connect	bluetui
+Bluetooth: pair and connect (bluez shell)	bluetoothctl
+Audio: devices, routing, volumes	wiremix
+Monitors: modes and layout now	topaz-settings-outputs
+Power profile: choose	topaz-settings-power
+Battery and power report	topaz-settings-battery
+Services: units and their state	systemd-manager-tui
+Journal: browse logs	lazyjournal
+Journal: this boot, warnings and up	topaz-settings-journal
+Processes and resources	btop
+Disk usage: home (parallel scan)	gdu
+Disk usage: home	ncdu
+Mounts: removable drives	bashmount
+Firewall: active zone and rules	topaz-settings-firewall
+Clipboard history: pick and copy	topaz-settings-clipboard
+Flatpak: update apps	flatpak update
+System image: status and pending update	topaz-settings-image
+Screenshot: pick an area	topaz-settings-screenshot
+Screen recording: pick an area, Ctrl+C to stop	topaz-settings-record
+EOF
+)
+
+# The small wrappers above, as functions. Each is one line of intent over
+# a command that would otherwise need its options remembered.
+topaz-settings-outputs() { niri msg outputs | "${PAGER:-less}"; }
+# Bluefin runs tuned with its power-profiles-daemon shim (tuned-ppd), which
+# has no powerprofilesctl binary; tuned-adm is the command.
+topaz-settings-power() {
+    local profile
+    profile=$(tuned-adm list 2>/dev/null | sed -n 's/^- \([^ ]*\) .*/\1/p' | fzf --prompt='power profile> ') || return 0
+    tuned-adm profile "$profile" && tuned-adm active
+}
+topaz-settings-battery() { upower -d | "${PAGER:-less}"; }
+topaz-settings-journal() { journalctl -b -p warning --no-pager | "${PAGER:-less}"; }
+topaz-settings-firewall() { sudo firewall-cmd --list-all | "${PAGER:-less}"; }
+topaz-settings-clipboard() {
+    cliphist list | fzf --prompt='clipboard> ' | cliphist decode | wl-copy
+}
+topaz-settings-image() {
+    rpm-ostree status
+    echo
+    rpm-ostree upgrade --check || true
+    read -r -p 'Enter to close '
+}
+topaz-settings-screenshot() { niri msg action screenshot; }
+topaz-settings-record() {
+    local out
+    out="$HOME/Videos/Recording from $(date '+%Y-%m-%d %H-%M-%S').mp4"
+    mkdir -p "$HOME/Videos"
+    wf-recorder -g "$(slurp)" -f "$out" && echo "saved $out"
+}
+
+# A wrapper's tool is the command it runs; everything else is itself.
+tool_of() {
+    case $1 in
+    topaz-settings-outputs) echo niri ;;
+    topaz-settings-power) echo tuned-adm ;;
+    topaz-settings-battery) echo upower ;;
+    topaz-settings-journal) echo journalctl ;;
+    topaz-settings-firewall) echo firewall-cmd ;;
+    topaz-settings-clipboard) echo cliphist ;;
+    topaz-settings-image) echo rpm-ostree ;;
+    topaz-settings-screenshot) echo niri ;;
+    topaz-settings-record) echo wf-recorder ;;
+    *) echo "$1" ;;
+    esac
+}
+
+available() {
+    local label cmd
+    while IFS=$'\t' read -r label cmd; do
+        if command -v "$(tool_of "${cmd%% *}")" > /dev/null; then
+            printf '%s\t%s\n' "$label" "$cmd"
+        fi
+    done <<< "$entries"
+}
+
+# A wrapper is a function here; a tool is a command.
+run() {
+    if declare -F "${1%% *}" > /dev/null; then
+        "${1%% *}"
+    else
+        # shellcheck disable=SC2086  # the command's own words are the arguments
+        exec $1
+    fi
+}
+
+# The terminal half of a fuzzel pick (see below): the choice is made,
+# run it here where the wrappers exist.
+if [ "${1:-}" = --run ]; then
+    run "$2"
+    exit 0
+fi
+
+if [ "${1:-}" = --list ]; then
+    while IFS=$'\t' read -r label cmd; do
+        tool=$(tool_of "${cmd%% *}")
+        if command -v "$tool" > /dev/null; then
+            printf '[ ok ]   %-48s %s\n' "$label" "$cmd"
+        else
+            printf '[miss]   %-48s %s  (%s not installed)\n' "$label" "$cmd" "$tool"
+        fi
+    done <<< "$entries"
+    exit 0
+fi
+
+if [ -t 1 ]; then
+    choice=$(available | fzf --prompt='settings> ' --with-nth=1 --delimiter=$'\t') || exit 0
+    run "${choice#*$'\t'}"
+else
+    choice=$(available | cut -f1 | fuzzel --dmenu --prompt='settings> ') || exit 0
+    cmd=$(available | awk -F'\t' -v l="$choice" '$1 == l {print $2}')
+    [ -n "$cmd" ] || exit 0
+    term=${TERMINAL:-}
+    [ -n "$term" ] || term=$(command -v kitty || command -v foot || true)
+    [ -n "$term" ] || { echo "topaz-settings: no terminal (set TERMINAL)" >&2; exit 1; }
+    # Re-enter this script in the terminal with the choice made: the
+    # wrappers are functions here and are not visible to a new process.
+    exec "$term" -e "$0" --run "$cmd"
+fi

@@ -1,0 +1,77 @@
+#!/usr/bin/bash
+# Install, update or check the terminal settings tools Fedora does not
+# package (the packaged ones ship in the topaz-os image, ledger 0051).
+#
+#   topaz-tuis            install or update everything below
+#   topaz-tuis --check    report what is installed, exit 1 if anything is missing
+#
+# Rust tools come from crates.io through cargo (rustup's cargo, or
+# Homebrew's); the rest are Homebrew bottles. Versions are pinned here so
+# a run on another day gives the same tools; bump them deliberately.
+set -euo pipefail
+
+# name  version  what it is for
+cargo_tools=(
+    "bluetui 0.8.0 Bluetooth: pair and connect (BlueZ over D-Bus)"
+    "wlctl 0.1.10 Wi-Fi: scan and join (NetworkManager over D-Bus)"
+    "systemd-manager-tui 1.3.0 Services: units and their state"
+)
+brew_tools=(
+    "lazyjournal Journal: browse logs"
+    "btdu Btrfs: what the space is really used by (run with sudo)"
+)
+
+check() {
+    local missing=0 spec name
+    for spec in "${cargo_tools[@]}"; do
+        name=${spec%% *}
+        if command -v "$name" > /dev/null; then
+            printf '[ ok ]   %-22s %s\n' "$name" "$("$name" --version 2>/dev/null | head -n 1 || true)"
+        else
+            printf '[miss]   %-22s %s\n' "$name" "${spec#* * }"
+            missing=1
+        fi
+    done
+    for spec in "${brew_tools[@]}"; do
+        name=${spec%% *}
+        if command -v "$name" > /dev/null; then
+            printf '[ ok ]   %-22s %s\n' "$name" "$("$name" --version 2>/dev/null | head -n 1 || true)"
+        else
+            printf '[miss]   %-22s %s\n' "$name" "${spec#* }"
+            missing=1
+        fi
+    done
+    return $missing
+}
+
+if [ "${1:-}" = --check ]; then
+    check
+    exit $?
+fi
+
+command -v cargo > /dev/null || {
+    echo "topaz-tuis: cargo not found (rustup: https://rustup.rs, or brew install rust)" >&2
+    exit 1
+}
+command -v brew > /dev/null || {
+    echo "topaz-tuis: brew not found (Bluefin ships it; run 'ujust brew' on a stock image)" >&2
+    exit 1
+}
+
+for spec in "${cargo_tools[@]}"; do
+    read -r name version _ <<< "$spec"
+    # cargo install is a no-op when the exact version is already installed.
+    cargo install --locked --version "$version" "$name"
+done
+for spec in "${brew_tools[@]}"; do
+    name=${spec%% *}
+    if brew list --formula "$name" > /dev/null 2>&1; then
+        brew upgrade "$name" || true
+    else
+        brew install "$name"
+    fi
+done
+
+echo
+check || true
+echo "Done. topaz-settings lists them; ~/.cargo/bin must be on PATH for the cargo ones."
