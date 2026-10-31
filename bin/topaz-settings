@@ -70,6 +70,22 @@ topaz-settings-record() {
     wf-recorder -g "$(slurp)" -f "$out" && echo "saved $out"
 }
 
+# What a wrapper really runs, for the menu and the "running" line.
+shown_as() {
+    case $1 in
+    topaz-settings-outputs) echo "niri msg outputs" ;;
+    topaz-settings-power) echo "tuned-adm profile <pick>" ;;
+    topaz-settings-battery) echo "upower -d" ;;
+    topaz-settings-journal) echo "journalctl -b -p warning" ;;
+    topaz-settings-firewall) echo "sudo firewall-cmd --list-all" ;;
+    topaz-settings-clipboard) echo "cliphist list | fzf | cliphist decode | wl-copy" ;;
+    topaz-settings-image) echo "rpm-ostree status; rpm-ostree upgrade --check" ;;
+    topaz-settings-screenshot) echo "niri msg action screenshot" ;;
+    topaz-settings-record) echo "wf-recorder -g \"\$(slurp)\"" ;;
+    *) echo "$1" ;;
+    esac
+}
+
 # A wrapper's tool is the command it runs; everything else is itself.
 tool_of() {
     case $1 in
@@ -86,17 +102,21 @@ tool_of() {
     esac
 }
 
+# The menu lines: what you want, what runs, and the command as a hidden
+# third field for the picker to hand back.
 available() {
     local label cmd
     while IFS=$'\t' read -r label cmd; do
         if command -v "$(tool_of "${cmd%% *}")" > /dev/null; then
-            printf '%s\t%s\n' "$label" "$cmd"
+            printf '%-46s %s\t%s\n' "$label" "$(shown_as "$cmd")" "$cmd"
         fi
     done <<< "$entries"
 }
 
-# A wrapper is a function here; a tool is a command.
+# A wrapper is a function here; a tool is a command. Say what runs first:
+# the menu is gone by then, and over ssh the name is worth knowing.
 run() {
+    echo "topaz-settings: running $(shown_as "$1")"
     if declare -F "${1%% *}" > /dev/null; then
         "${1%% *}"
     else
@@ -116,9 +136,9 @@ if [ "${1:-}" = --list ]; then
     while IFS=$'\t' read -r label cmd; do
         tool=$(tool_of "${cmd%% *}")
         if command -v "$tool" > /dev/null; then
-            printf '[ ok ]   %-48s %s\n' "$label" "$cmd"
+            printf '[ ok ]   %-46s %s\n' "$label" "$(shown_as "$cmd")"
         else
-            printf '[miss]   %-48s %s  (%s not installed)\n' "$label" "$cmd" "$tool"
+            printf '[miss]   %-46s %s  (%s not installed)\n' "$label" "$(shown_as "$cmd")" "$tool"
         fi
     done <<< "$entries"
     exit 0
