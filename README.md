@@ -90,6 +90,14 @@ static checks as CI (`tests/lint.sh`) on every commit.
   plus `NOTIFY_IGNORE_PORTAL=1`, so libnotify bypasses the portal. The GTK portal
   backend drops the click's xdg-activation token, so a notification click
   cannot bring the app to the front; direct delivery keeps the token.
+- **`just flatpak-fonts`** — host fonts, CJK included, visible in every Flatpak.
+  The freedesktop 26.08 runtime ships a prebuilt fontconfig cache for its own
+  `/usr/share/fonts` under the key Flatpak reuses for the host's tree; on an
+  ostree host both carry mtime 0, the cache passes as valid, and the host
+  fonts are never scanned — Japanese is tofu in Discord, Obsidian, Element
+  and the rest. A `FONTCONFIG_FILE` override gives the host tree its own
+  cache key and prefers the JP Noto CJK faces for untagged ideographs, as
+  Fedora does on the host. `just flatpak-fonts check` surveys the runtimes.
 - **`just chrome-integration`** — Chrome Flatpak overrides for automation
   workflows: WebGPU via Vulkan, read-only visibility of Claude Code state.
 - **`just claude-desktop`** — rootless installer/updater for the Debian-only

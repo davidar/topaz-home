@@ -258,6 +258,45 @@ notify-direct apps="com.discordapp.Discord":
         echo "$app: org.freedesktop.Notifications direct + NOTIFY_IGNORE_PORTAL=1 (restart the app to apply)"
     done
 
+# The freedesktop 26.08 runtime's fontconfig never scans /run/host/fonts on an
+# ostree host (a prebuilt cache of its own shadows the host tree), so Japanese
+# is tofu in Discord, Obsidian, Element and the rest; share/fontconfig-flatpak.conf
+# explains both fixes it carries.
+
+# Host fonts, CJK included, in every Flatpak (enable|disable|check)
+flatpak-fonts action="enable":
+    #!/usr/bin/bash
+    set -euo pipefail
+    conf="$HOME/.config/fontconfig/flatpak.conf"
+    case "{{ action }}" in
+    enable)
+        mkdir -p "$(dirname "$conf")"
+        cp -f "$PWD/share/fontconfig-flatpak.conf" "$conf"
+        flatpak override --user --filesystem=xdg-config/fontconfig:ro --env=FONTCONFIG_FILE="$conf"
+        echo "Installed $conf; every Flatpak now reads it (restart running apps)."
+        ;;
+    disable)
+        flatpak override --user --unset-env=FONTCONFIG_FILE --nofilesystem=xdg-config/fontconfig
+        rm -f "$conf"
+        echo "Flatpaks are back on the runtime's own font configuration (restart running apps)."
+        ;;
+    check)
+        # One app per installed runtime: how many Japanese-capable fonts its
+        # fontconfig can see. Zero means the host fonts are hidden again.
+        status=0
+        while read -r app runtime; do
+            n=$(flatpak run --command=fc-list "$app" :lang=ja 2>/dev/null | wc -l)
+            if [ "$n" -eq 0 ]; then mark="FAIL"; status=1; else mark=" ok "; fi
+            printf '[%s] %-40s %3s ja fonts (%s)\n' "$mark" "$runtime" "$n" "$app"
+        done < <(flatpak list --app --columns=application,runtime | sort -k2 -u)
+        exit "$status"
+        ;;
+    *)
+        echo "usage: just flatpak-fonts [enable|disable|check]" >&2
+        exit 2
+        ;;
+    esac
+
 # Chrome overrides for automation: WebGPU via Vulkan, read-only Claude Code state
 chrome-integration:
     #!/usr/bin/bash
