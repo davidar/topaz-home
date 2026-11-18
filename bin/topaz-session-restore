@@ -40,6 +40,35 @@ if [ ! -t 2 ] && command -v systemd-cat >/dev/null; then
     exec 2> >(systemd-cat -t topaz-session-restore) 1>&2
 fi
 
+# Let the panel come up first. After a graphics driver update the bar
+# compiles its shaders cold, and that compile ran four times slower
+# beside a dozen applications starting (9 s to a bar instead of 2). Its
+# unit is Type=notify and turns active at its first complete frame, so
+# wait for that, at most TOPAZ_SESSION_BAR_WAIT seconds (0 skips the
+# wait). No such unit, a failed one, or a session that has started its
+# units without the bar: nothing to wait for.
+bar=caustics-bar.service
+bar_wait="${TOPAZ_SESSION_BAR_WAIT:-15}"
+if [ "$bar_wait" -gt 0 ] && systemctl --user cat "$bar" >/dev/null 2>&1; then
+    bar_deadline=$((EPOCHSECONDS + bar_wait))
+    while [ "$EPOCHSECONDS" -lt "$bar_deadline" ]; do
+        case "$(systemctl --user is-active "$bar" 2>/dev/null || :)" in
+        active | failed) break ;;
+        inactive)
+            # Not started yet, or not part of this session at all: once
+            # the session's target is up and no start job is queued for
+            # the bar, it is not coming.
+            if systemctl --user is-active -q graphical-session.target &&
+                [ -z "$(systemctl --user show -p Job --value "$bar")" ]; then
+                break
+            fi
+            ;;
+        esac
+        sleep 0.2
+    done
+    echo "bar is $(systemctl --user is-active "$bar" 2>/dev/null || :) after waiting; restoring" >&2
+fi
+
 mapfile -t slots < <(jq -c '.windows[]' "$plan")
 focused_slot=$(jq -r '.focused // ""' "$plan")
 [ "${#slots[@]}" -gt 0 ] || exit 0
